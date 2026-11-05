@@ -36,8 +36,11 @@ body.mode-edit [data-mode="edit"], body.mode-split [data-mode="split"], body.mod
 
 /* 三栏布局 */
 .editor-main { flex: 1; min-height: 0; display: flex; }
-.file-tree { flex: none; width: 230px; overflow: auto; padding: 8px 6px 24px; border-right: 1px solid var(--border); background: var(--surface); font-size: 13px; }
+.file-tree { flex: none; width: 230px; overflow: auto; padding: 0 6px 24px; border-right: 1px solid var(--border); background: var(--surface); font-size: 13px; }
 body.tree-collapsed .file-tree { display: none; }
+/* 侧栏收起后留下的窄边，展开按钮和收起按钮在同一高度 */
+.tree-rail { display: none; flex: none; padding: 6px; border-right: 1px solid var(--border); background: var(--surface); }
+body.tree-collapsed .tree-rail { display: flex; align-items: flex-start; }
 .editor-pane { flex: 1 1 0; min-width: 0; }
 .preview-wrap { position: relative; flex: 1 1 0; min-width: 0; display: flex; border-left: 1px solid var(--border); container-type: inline-size; }
 .preview-pane { flex: 1; min-width: 0; overflow: auto; padding: 28px 56px 64px 32px; } /* 右边留出目录缩略条的位置 */
@@ -75,7 +78,11 @@ body.mode-preview .preview-wrap { border-left: 0; }
 body.no-file .doc { display: none; }
 
 /* 文件树 */
-.tree-root { padding: 2px 8px 8px; color: var(--muted); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 根目录这一行固定在顶部，文件很多时也能点到收起按钮 */
+.tree-root { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 4px; margin: 0 -6px; padding: 6px 6px 6px 14px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 600; }
+.tree-root-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-collapse { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 18px; line-height: 1; }
+.tree-collapse:hover { background: var(--border); color: var(--text); }
 .tree-note { padding: 6px 8px; color: #a33; font-size: 12px; line-height: 1.5; }
 .file-tree details > summary, .tree-file { display: block; width: 100%; padding: 3px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; line-height: 1.5; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .file-tree details > summary { font-weight: 600; }
@@ -86,6 +93,7 @@ body.no-file .doc { display: none; }
 .tree-children { padding-left: 12px; }
 .tree-file.active { background: var(--text); color: #fff; }
 .tree-empty { padding: 3px 8px; color: var(--muted); }
+.file-tree details > summary.tree-selected, .file-tree details > summary.tree-selected:hover { background: #dbe7f6; }
 .tree-rename { width: calc(100% - 20px); height: 22px; padding: 0 4px; border: 1px solid var(--accent); border-radius: 3px; background: var(--bg); color: var(--text); font: inherit; font-weight: 400; }
 .tree-dragging { opacity: .45; }
 /* 拖拽时高亮放下的位置 */
@@ -125,11 +133,9 @@ body.no-file .doc { display: none; }
 /* frontmatter 是文章信息，不是正文，用浅色 */
 .cm-s-default .cm-atom, .cm-s-default .cm-def, .cm-s-default .cm-number { color: #80868b; }
 
-/* 设置窗口 */
-.editor-bar > #toggle-tree { width: 30px; padding: 0; color: var(--muted); font-size: 18px; line-height: 1; }
 /* 图标按钮 */
-.editor-bar > #open-folder, .editor-bar > #new-file, .editor-bar > #delete-file, .editor-bar > #open-preferences { display: flex; align-items: center; justify-content: center; width: 30px; padding: 0; color: var(--muted); }
-.editor-bar > #open-folder:hover, .editor-bar > #new-file:hover, .editor-bar > #open-preferences:hover { color: var(--text); }
+.editor-bar > #open-folder, .editor-bar > #new-file, .editor-bar > #new-folder, .editor-bar > #delete-file, .editor-bar > #open-preferences { display: flex; align-items: center; justify-content: center; width: 30px; padding: 0; color: var(--muted); }
+.editor-bar > #open-folder:hover, .editor-bar > #new-file:hover, .editor-bar > #new-folder:hover, .editor-bar > #open-preferences:hover { color: var(--text); }
 .editor-bar > #delete-file:hover:not(:disabled) { background: #fdf3f1; border-color: #e3b4ae; color: #c0392b; }
 .editor-bar > #delete-file:disabled { opacity: .4; cursor: default; }
 .editor-bar > button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }

@@ -289,6 +289,15 @@ def api_new(data):
     return {"path": rel}
 
 
+def api_new_folder(data):
+    rel = (data.get("path") or "").strip().strip("/")
+    path = content_path(data.get("root"), rel)
+    if path.exists():
+        raise ApiError(409, "That folder already exists")
+    path.mkdir(parents=True)
+    return {"path": rel}
+
+
 def api_move(data):
     """移动或重命名文件、文件夹。目标已存在时拒绝，绝不覆盖。"""
     root = data.get("root")
@@ -314,17 +323,28 @@ def api_move(data):
 
 
 def api_delete(data):
-    """把文件移到系统回收站，不永久删除，点错了还能恢复。"""
-    path = markdown_path(data.get("root"), data.get("path"))
-    if not path.is_file():
+    """把文件或文件夹移到系统回收站，不永久删除，点错了还能恢复。"""
+    root = data.get("root")
+    path = content_path(root, data.get("path"))  # 路径至少有一层，所以不可能删到打开的文件夹本身
+    if path.is_file():
+        markdown_path(root, data.get("path"))  # 文件只允许删 Markdown
+    elif not path.is_dir():
         raise ApiError(404, "File not found")
     if send2trash is None:
         raise ApiError(500, "Deleting needs the send2trash package. Run: pip install -r requirements.txt")
     try:
         send2trash(str(path))
     except TrashPermissionError as err:
-        raise ApiError(500, f"Could not move the file to the Recycle Bin: {err}")
+        raise ApiError(500, f"Could not move it to the Recycle Bin: {err}")
     return {"path": data.get("path")}
+
+
+def api_folder_info(root, rel):
+    """文件夹里有多少个文件，包括子文件夹和非 Markdown 文件。删除前告诉用户。"""
+    path = content_path(root, rel)
+    if not path.is_dir():
+        raise ApiError(404, "Folder not found")
+    return {"files": sum(len(files) for _, _, files in os.walk(path))}
 
 
 def api_save_image(data):
@@ -540,6 +560,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, api_read_preferences())
         elif url.path == "/api/tree":
             self.send_json(200, api_tree(query.get("root")))
+        elif url.path == "/api/folder-info":
+            self.send_json(200, api_folder_info(query.get("root"), query.get("path")))
         elif url.path == "/api/file":
             self.send_json(200, api_read(query.get("root"), query.get("path")))
         elif url.path == "/files":
@@ -568,6 +590,7 @@ class Handler(BaseHTTPRequestHandler):
         routes = {
             "/api/save": api_save,
             "/api/new": api_new,
+            "/api/new-folder": api_new_folder,
             "/api/move": api_move,
             "/api/delete": api_delete,
             "/api/image": api_save_image,

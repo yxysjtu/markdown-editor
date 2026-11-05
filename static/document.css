@@ -42,11 +42,31 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.7 Inte
 /* 导出的文件 */
 body.exported .doc { max-width: 760px; margin: 0 auto; padding: 40px 24px 64px; }
 
+/* 导出文件的目录：窄屏放在正文上方，可以折叠；宽屏放在正文右侧，随页面固定 */
+html:has(.export-toc) { scroll-behavior: smooth; }
+.export-toc { max-width: 760px; margin: 24px auto -16px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); font-size: 14px; line-height: 1.5; }
+body.exported.has-toc { padding: 0 24px; }
+body.exported.has-toc .doc { padding-left: 0; padding-right: 0; }
+.export-toc summary { font-weight: 700; cursor: pointer; }
+.export-toc ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.export-toc a { display: block; padding: 3px 8px; border-radius: 4px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
+.export-toc a:hover { background: var(--surface); color: var(--text); }
+.export-toc .toc-level-1 a { padding-left: 20px; }
+.export-toc .toc-level-2 a { padding-left: 32px; }
+@media screen and (min-width: 1100px) {
+  /* 左右两列等宽，正文就在窗口正中；窗口不够宽时，左列先缩小，给目录让位 */
+  body.exported.has-toc { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 760px) minmax(220px, 1fr); gap: 40px; }
+  body.exported.has-toc .doc { grid-column: 2; grid-row: 1; width: 100%; margin: 0; }
+  .export-toc { grid-column: 3; grid-row: 1; justify-self: start; align-self: start; position: sticky; top: 24px; width: 100%; max-width: 260px; max-height: calc(100vh - 48px); overflow: auto; margin: 40px 0 0; }
+}
+
 /* 打印和 PDF：纸上不能左右滚动，长内容要换行；保留代码块和表头的底色 */
 @media print {
   @page { margin: 18mm 16mm; }
   body { background: #fff; font-size: 12pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body.exported .doc { max-width: none; padding: 0; }
+  body.exported.has-toc { padding: 0; }
+  .export-toc { display: none; }
   .prose pre, .prose pre code { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
   .prose table { display: table; overflow: visible; }
   .prose .math-display { overflow: visible; }

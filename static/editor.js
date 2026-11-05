@@ -53,7 +53,7 @@
   }
 
   // ---------- 设置 ----------
-  var DEFAULT_PREFERENCES = { font_size: 14, image_folder: 'fig' };
+  var DEFAULT_PREFERENCES = { font_size: 14, image_folder: 'fig', image_save_base: 'current' };
   var preferences = DEFAULT_PREFERENCES; // 已保存的设置
   var prefDialog = document.getElementById('preferences');
   var prefSize = document.getElementById('pref-font-size');
@@ -68,15 +68,30 @@
     prefSize.value = prefs.font_size;
     document.getElementById('pref-font-size-value').textContent = prefs.font_size + ' px';
     document.getElementById('pref-image-folder').value = prefs.image_folder;
+    document.getElementById('pref-image-base').value = prefs.image_save_base;
+    showImagePathHint();
   }
 
   function preferencesInDialog() {
-    return { font_size: +prefSize.value, image_folder: document.getElementById('pref-image-folder').value };
+    return {
+      font_size: +prefSize.value,
+      image_folder: document.getElementById('pref-image-folder').value,
+      image_save_base: document.getElementById('pref-image-base').value
+    };
+  }
+
+  function showImagePathHint() { // 让用户直接看到图片会存到哪里
+    var folder = document.getElementById('pref-image-folder').value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    var inFileFolder = document.getElementById('pref-image-base').value === 'current';
+    document.getElementById('pref-image-hint').textContent =
+      'Example: ' + (inFileFolder ? 'notes/' : '') + folder + '/image.png' +
+      (inFileFolder ? ' for a file in notes/' : ', wherever the Markdown file is');
   }
 
   function previewPreferences() { // 调节时编辑区实时变化，保存后才写入文件
     var prefs = preferencesInDialog();
     document.getElementById('pref-font-size-value').textContent = prefs.font_size + ' px';
+    showImagePathHint();
     applyPreferences(prefs);
   }
 
@@ -452,6 +467,7 @@
         var summary = document.createElement('summary');
         summary.textContent = item.name;
         summary.title = item.path;
+        summary.addEventListener('click', function () { selectFolder(item.path); });
         enableTreeActions(summary, item);
         details.appendChild(summary);
         var children = document.createElement('div');
@@ -510,6 +526,9 @@
           document.title = current.path.split('/').pop() + ' · Markdown Editor';
           history.replaceState(null, '', location.search + '#' + encodeURIComponent(current.path));
           renderPreview(); // 图片的相对路径变了
+        }
+        if (selectedFolder !== null && isInside(selectedFolder, from)) {
+          selectedFolder = data.path + selectedFolder.slice(from.length);
         }
         return loadTree().then(function () {
           if (folderToShow !== undefined) openFolders(folderToShow);
@@ -629,17 +648,64 @@
     movePath(from, joinPath(folder, from.split('/').pop()), folder);
   });
 
+  // ---------- 选中文件夹 ----------
+  var selectedFolder = null; // 选中的文件夹。没选中时，垃圾桶删除当前打开的文件
+
+  function isInside(path, folder) { // path 就是 folder，或者在 folder 里面
+    return path === folder || path.indexOf(folder + '/') === 0;
+  }
+
+  function selectFolder(path) {
+    selectedFolder = path;
+    markActive();
+  }
+
+  // 新建文件和文件夹的默认位置：选中的文件夹，否则是当前文件所在的文件夹
+  function newItemParent() {
+    if (selectedFolder !== null) return selectedFolder;
+    return current ? parentOf(current.path) : '';
+  }
+
+  function clearSelectedFolder() {
+    selectedFolder = null;
+    markActive();
+  }
+
+  function updateDeleteButton() {
+    var target = selectedFolder !== null ? selectedFolder : current && current.path;
+    deleteButton.disabled = !target;
+    var label = target ? 'Move "' + target + '" to the Recycle Bin' : 'Select a file or folder to delete';
+    deleteButton.title = label;
+    deleteButton.setAttribute('aria-label', label);
+  }
+
+  // 点文件树的空白处取消选中
+  tree.addEventListener('click', function (event) {
+    if (!event.target.closest('summary, .tree-file')) clearSelectedFolder();
+  });
+
   function markActive() {
+    var selectedStillExists = false;
+    tree.querySelectorAll('details').forEach(function (details) {
+      var selected = details.dataset.path === selectedFolder;
+      if (selected) selectedStillExists = true;
+      details.querySelector('summary').classList.toggle('tree-selected', selected);
+    });
+    if (!selectedStillExists) selectedFolder = null; // 比如在资源管理器里被删了
+    updateDeleteButton();
     tree.querySelectorAll('.tree-file').forEach(function (button) {
       var active = !!current && button.dataset.path === current.path;
       button.classList.toggle('active', active);
-      if (active) {
-        for (var el = button.parentElement; el && el !== tree; el = el.parentElement) {
-          if (el.tagName === 'DETAILS') el.open = true;
-        }
-      }
     });
   }
+
+  var collapseButton = document.createElement('button'); // 文件树每次重新渲染时都放回根目录那一行
+  collapseButton.type = 'button';
+  collapseButton.className = 'tree-collapse';
+  collapseButton.textContent = '‹';
+  collapseButton.title = 'Collapse sidebar';
+  collapseButton.setAttribute('aria-label', 'Collapse sidebar');
+  collapseButton.setAttribute('aria-controls', 'file-tree');
 
   function loadTree() {
     return request('/api/tree?root=' + encodeURIComponent(root)).then(function (data) {
@@ -649,8 +715,12 @@
       tree.textContent = '';
       var rootLabel = document.createElement('div');
       rootLabel.className = 'tree-root';
-      rootLabel.textContent = data.name;
-      rootLabel.title = data.root;
+      var rootName = document.createElement('span');
+      rootName.className = 'tree-root-name';
+      rootName.textContent = data.name;
+      rootName.title = data.root;
+      rootLabel.appendChild(rootName);
+      rootLabel.appendChild(collapseButton);
       tree.appendChild(rootLabel);
       if (data.truncated) {
         var note = document.createElement('div');
@@ -685,7 +755,7 @@
     clearTimeout(previewTimer);
     cm.swapDoc(CodeMirror.Doc('', 'markdown-editor'));
     cm.setOption('readOnly', true);
-    deleteButton.disabled = true;
+    updateDeleteButton();
     exportToggle.disabled = true;
     closeExportMenu();
     document.body.classList.add('no-file');
@@ -697,18 +767,42 @@
     history.replaceState(null, '', location.search);
   }
 
-  deleteButton.addEventListener('click', function () {
-    if (!current) return;
-    var path = current.path;
-    if (!window.confirm('Move "' + path + '" to the Recycle Bin?')) return;
-    clearTimeout(saveTimer); // 文件要删了，不用再保存，否则可能把它重新写回去
-    (saving || Promise.resolve()).then(function () {
+  function deleteMessage(path, files) {
+    if (files === null) return 'Move "' + path + '" to the Recycle Bin?';
+    if (files === 0) return 'Move the empty folder "' + path + '" to the Recycle Bin?';
+    return 'Move folder "' + path + '" and ' + files + (files === 1 ? ' file' : ' files') + ' to the Recycle Bin?';
+  }
+
+  function deleteTarget(path, files) {
+    var affectsCurrent = !!current && isInside(current.path, path);
+    var message = deleteMessage(path, files);
+    if (affectsCurrent && isDirty()) message += '\n\nUnsaved changes in "' + current.path + '" will be lost.';
+    if (!window.confirm(message)) return Promise.resolve();
+    if (affectsCurrent) {
+      clearTimeout(saveTimer); // 要删了，不用再保存，否则可能把它重新写回去
+      cm.setOption('readOnly', true);
+    }
+    return (saving || Promise.resolve()).then(function () {
       return request('/api/delete', { root: root, path: path });
     }).then(function () {
-      if (current && current.path === path) closeCurrentFile();
+      if (selectedFolder === path) selectedFolder = null;
+      if (affectsCurrent) closeCurrentFile();
       showStatus('Moved to the Recycle Bin');
       return loadTree();
-    }).catch(function (err) { showStatus(err.message, true); });
+    }).catch(function (err) {
+      if (affectsCurrent) cm.setOption('readOnly', false); // 没删成，继续编辑
+      showStatus(err.message, true);
+    });
+  }
+
+  deleteButton.addEventListener('click', function () {
+    opening.then(function () { // 等进行中的打开完成，才能判断删除会不会影响正在编辑的文件
+      if (selectedFolder === null) return current ? deleteTarget(current.path, null) : null;
+      var path = selectedFolder;
+      return request('/api/folder-info?root=' + encodeURIComponent(root) + '&path=' + encodeURIComponent(path))
+        .then(function (info) { return deleteTarget(path, info.files); })
+        .catch(function (err) { showStatus(err.message, true); });
+    });
   });
 
   // ---------- 导出 ----------
@@ -768,6 +862,24 @@
     })).then(function () { return failed; });
   }
 
+  // 导出文件的目录，只用链接和 details，不需要脚本。标题太少时不需要目录
+  function exportTocHtml(body) {
+    var headings = Array.prototype.filter.call(body.querySelectorAll('h1, h2, h3'), function (heading) { return heading.id; });
+    if (headings.length < TOC_MIN_HEADINGS) return '';
+    var top = Math.min.apply(null, headings.map(function (h) { return +h.tagName.charAt(1); }));
+    var list = document.createElement('ul');
+    headings.forEach(function (heading) {
+      var item = document.createElement('li');
+      item.className = 'toc-level-' + (+heading.tagName.charAt(1) - top);
+      var link = document.createElement('a');
+      link.setAttribute('href', '#' + heading.id);
+      copyHeadingContent(heading, link);
+      item.appendChild(link);
+      list.appendChild(item);
+    });
+    return '<details class="export-toc" open><summary>Table of Contents</summary>' + list.outerHTML + '</details>\n';
+  }
+
   // 生成独立的 HTML：内容是当前编辑器里的（包括还没保存的改动），样式都写在文件里
   function buildExportHtml(path, content) {
     return Promise.all([
@@ -790,6 +902,7 @@
       }
       return embedImages(body).then(function (failedImages) {
         var title = data.title || fileStem(path);
+        var toc = exportTocHtml(body);
         var head = '';
         if (data.title || data.date || data.tags.length) {
           head = '<header class="doc-head">' + (data.title ? '<h1>' + escapeHtml(data.title) + '</h1>' : '') +
@@ -802,7 +915,7 @@
           '<title>' + escapeHtml(title) + '</title>\n' +
           (body.querySelector('.katex') ? '<link rel="stylesheet" href="' + KATEX_CSS + '">\n' : '') +
           '<style>\n' + results[1] + '\n' + results[2] + '\n</style>\n</head>\n' +
-          '<body class="exported">\n<article class="doc">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
+          '<body class="exported' + (toc ? ' has-toc' : '') + '">\n' + toc + '<article class="doc">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
         return { html: html, failedImages: failedImages };
       });
     });
@@ -934,7 +1047,6 @@
     saved = data.content;
     document.body.classList.remove('no-file');
     cm.setOption('readOnly', false);
-    deleteButton.disabled = false;
     exportToggle.disabled = false;
     cm.swapDoc(CodeMirror.Doc(data.content, 'markdown-editor')); // 换一个文档，撤销不会跨文件
     filePath.textContent = data.path;
@@ -949,12 +1061,16 @@
   }
 
   function openFile(path) {
+    clearSelectedFolder(); // 点了文件，垃圾桶就回到删除这个文件
     if (current && current.path === path) return Promise.resolve(); // 重新加载会清空撤销记录
     opening = opening.then(function () {
       return saveNow();
     }).then(function (ok) {
       if (!ok) return; // 没保存成功就不切换，否则改动会丢
-      return request(fileUrl(path)).then(showFile);
+      return request(fileUrl(path)).then(function (data) {
+        showFile(data);
+        openFolders(parentOf(data.path)); // 只在打开文件时展开它的上级，否则用户没法折叠或展开这些文件夹
+      });
     }).catch(function (err) { showStatus(err.message, true); });
     return opening;
   }
@@ -1100,6 +1216,16 @@
     updateTocActive();
   }
 
+  function copyHeadingContent(heading, target) {
+    target.innerHTML = heading.innerHTML; // 保留渲染好的公式和代码
+    target.querySelectorAll('sup').forEach(function (el) { el.remove(); }); // 去掉脚注编号
+    target.querySelectorAll('a').forEach(function (el) { // 目录项里不能再放链接
+      var text = document.createElement('span');
+      text.innerHTML = el.innerHTML;
+      el.replaceWith(text);
+    });
+  }
+
   function buildToc() {
     var scrollTop = tocList.scrollTop; // 打字时目录会重建，不要让它跳回顶部
     tocHeadings = Array.prototype.slice.call(previewBody.querySelectorAll('h1, h2, h3'));
@@ -1114,13 +1240,7 @@
       var item = document.createElement('button');
       item.type = 'button';
       item.className = 'toc-item toc-level-' + level;
-      item.innerHTML = heading.innerHTML; // 保留渲染好的公式和代码
-      item.querySelectorAll('sup').forEach(function (el) { el.remove(); }); // 去掉脚注编号
-      item.querySelectorAll('a').forEach(function (el) { // 按钮里不能再放链接
-        var text = document.createElement('span');
-        text.innerHTML = el.innerHTML;
-        el.replaceWith(text);
-      });
+      copyHeadingContent(heading, item);
       item.addEventListener('click', function () { jumpToHeading(heading); });
       tocList.appendChild(item);
     });
@@ -1245,35 +1365,47 @@
   var savedMode = localStorage.getItem('editor-mode');
   if (savedMode) document.body.className = document.body.className.replace(/mode-\w+/, 'mode-' + savedMode);
 
-  // 折叠左边的文件夹栏，状态会记住
-  var treeToggle = document.getElementById('toggle-tree');
+  // 折叠左边的文件夹栏，状态会记住。收起按钮在侧栏右上角，侧栏收起后左边留一条窄边放展开按钮
+  var expandButton = document.getElementById('expand-tree');
   function setTreeCollapsed(collapsed) {
     document.body.classList.toggle('tree-collapsed', collapsed);
-    treeToggle.textContent = collapsed ? '›' : '‹';
-    treeToggle.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
-    treeToggle.setAttribute('aria-label', treeToggle.title);
-    treeToggle.setAttribute('aria-expanded', String(!collapsed));
     cm.refresh(); // 编辑区宽度变了，要重新计算换行
     syncScroll();
   }
-  treeToggle.hidden = false;
-  treeToggle.addEventListener('click', function () {
-    var collapsed = !document.body.classList.contains('tree-collapsed');
+  function toggleTree(collapsed) {
     localStorage.setItem('editor-tree-collapsed', collapsed ? '1' : '0');
     setTreeCollapsed(collapsed);
+    (collapsed ? expandButton : collapseButton).focus(); // 刚点的按钮消失了，键盘焦点要跟过去
+  }
+  expandButton.addEventListener('click', function () { toggleTree(false); });
+  collapseButton.addEventListener('click', function (event) {
+    event.stopPropagation(); // 收起侧栏不应该取消选中文件夹
+    toggleTree(true);
   });
   setTreeCollapsed(localStorage.getItem('editor-tree-collapsed') === '1');
 
   var newFileButton = document.getElementById('new-file');
   newFileButton.hidden = false;
   newFileButton.addEventListener('click', function () {
-    var folder = current ? current.path.split('/').slice(0, -1).join('/') : '';
-    var path = window.prompt('File path, relative to the open folder (missing folders are created):', (folder ? folder + '/' : '') + 'new-file.md');
+    var path = window.prompt('File path, relative to the open folder (missing folders are created):', joinPath(newItemParent(), 'new-file.md'));
     if (!path) return;
     saveNow().then(function (ok) {
       if (!ok) return;
       return request('/api/new', { root: root, path: path }).then(function (data) {
         return loadTree().then(function () { return openFile(data.path); });
+      });
+    }).catch(function (err) { showStatus(err.message, true); });
+  });
+
+  var newFolderButton = document.getElementById('new-folder');
+  newFolderButton.hidden = false;
+  newFolderButton.addEventListener('click', function () {
+    var path = window.prompt('Folder path, relative to the open folder:', joinPath(newItemParent(), 'new-folder'));
+    if (!path) return;
+    request('/api/new-folder', { root: root, path: path }).then(function (data) {
+      return loadTree().then(function () {
+        openFolders(data.path);
+        showStatus('Created ' + data.path);
       });
     }).catch(function (err) { showStatus(err.message, true); });
   });
