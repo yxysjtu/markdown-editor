@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown 编辑器</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="stylesheet" href="/code.css">
+<link rel="stylesheet" href="/editor.css">
+<script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/markdown/markdown.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/continuelist.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="/editor.js"></script>
+</head>
+<body class="mode-split no-file">
+<header class="editor-bar">
+  <button type="button" id="open-folder">打开文件夹</button>
+  <button type="button" id="new-file" hidden>新建文件</button>
+  <span id="file-path" class="file-path"></span>
+  <span id="save-status" class="save-status" role="status"></span>
+  <div class="mode-switch" role="group" aria-label="显示方式">
+    <button type="button" data-mode="edit">编辑</button>
+    <button type="button" data-mode="split">分栏</button>
+    <button type="button" data-mode="preview">预览</button>
+  </div>
+</header>
+
+<main id="welcome" class="welcome" hidden>
+  <h1>Markdown 编辑器</h1>
+  <p>选择一个文件夹，开始编辑里面的 Markdown 文件。</p>
+  <div class="welcome-open">
+    <button type="button" id="pick-folder">选择文件夹</button>
+    <form id="path-form" class="path-form">
+      <input id="path-input" type="text" placeholder="或输入完整路径，如 C:\Users\me\notes" aria-label="文件夹路径" autocomplete="off">
+      <button type="submit">打开</button>
+    </form>
+  </div>
+  <p id="welcome-error" class="welcome-error" hidden></p>
+  <section id="recent" hidden>
+    <h2>最近打开</h2>
+    <div id="recent-list" class="recent-list"></div>
+  </section>
+</main>
+
+<div id="workspace" class="editor-main" hidden>
+  <nav id="file-tree" class="file-tree" aria-label="文件"></nav>
+  <div id="editor-pane" class="editor-pane"></div>
+  <div id="preview-pane" class="preview-pane">
+    <div id="preview-error" class="preview-error" hidden></div>
+    <article id="preview-doc" class="doc">
+      <header id="preview-head" class="doc-head" hidden>
+        <h1 id="preview-title"></h1>
+        <div class="doc-meta"><time id="preview-date"></time><div id="preview-tags" class="tags"></div></div>
+      </header>
+      <div id="preview-body" class="prose"></div>
+    </article>
+  </div>
+</div>
+</body>
+</html>
