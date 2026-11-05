@@ -139,10 +139,9 @@ body.no-file .doc { display: none; }
 
 /* 设置窗口 */
 .editor-bar > #toggle-tree { width: 30px; padding: 0; color: var(--muted); font-size: 18px; line-height: 1; }
-.editor-bar > #new-file { width: 30px; padding: 0; font-size: 18px; line-height: 1; }
 /* 图标按钮 */
-.editor-bar > #open-folder, .editor-bar > #delete-file, .editor-bar > #open-preferences { display: flex; align-items: center; justify-content: center; width: 30px; padding: 0; color: var(--muted); }
-.editor-bar > #open-folder:hover, .editor-bar > #open-preferences:hover { color: var(--text); }
+.editor-bar > #open-folder, .editor-bar > #new-file, .editor-bar > #delete-file, .editor-bar > #open-preferences { display: flex; align-items: center; justify-content: center; width: 30px; padding: 0; color: var(--muted); }
+.editor-bar > #open-folder:hover, .editor-bar > #new-file:hover, .editor-bar > #open-preferences:hover { color: var(--text); }
 .editor-bar > #delete-file:hover:not(:disabled) { background: #fdf3f1; border-color: #e3b4ae; color: #c0392b; }
 .editor-bar > #delete-file:disabled { opacity: .4; cursor: default; }
 .editor-bar > button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
