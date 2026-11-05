@@ -2,3 +2,4 @@ markdown-it-py
 mdit-py-plugins
 pygments
 pyyaml
+send2trash

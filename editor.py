@@ -6,6 +6,7 @@
 只监听本机，并拒绝来自其他网页的请求，否则你打开的任意网站都可能改写你的文件。
 要打开哪个文件夹由每个请求的 root 参数决定，服务端不保存“当前文件夹”，所以多个窗口可以各开一个文件夹。
 """
+import base64
 import json
 import mimetypes
 import os
@@ -14,6 +15,7 @@ import re
 import subprocess
 import sys
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -29,10 +31,17 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 
+try:
+    from send2trash import TrashPermissionError, send2trash
+except ImportError:  # 只有删除文件需要它，没装时其他功能照常可用
+    send2trash = None
+    TrashPermissionError = OSError
+
 DEFAULT_PORT = 8001
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 RECENT_FILE = APP_DIR / "recent.json"
+PREFERENCES_FILE = APP_DIR / "preferences.json"
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
@@ -42,6 +51,8 @@ MARKDOWN_SUFFIXES = (".md", ".markdown")
 SKIP_DIRS = {"node_modules", "__pycache__", "venv"}  # 依赖和缓存，里面的 Markdown 不是你写的
 MAX_TREE_ENTRIES = 50000  # 不小心打开整个硬盘时，不至于一直卡住
 MAX_RECENT = 8
+IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+MAX_IMAGE_BYTES = 50 * 1024 * 1024
 CODE_CSS = HtmlFormatter(style="default").get_style_defs("pre")
 
 recent_lock = threading.Lock()
@@ -59,9 +70,9 @@ def workspace(root):
     """用户打开的文件夹，必须是绝对路径。"""
     path = Path(root) if isinstance(root, str) and root else None
     if path is None or not path.is_absolute():
-        raise ApiError(400, "请提供文件夹的完整路径")
+        raise ApiError(400, "Enter the full path of a folder")
     if not path.is_dir():
-        raise ApiError(404, f"找不到文件夹：{root}")
+        raise ApiError(404, f"Folder not found: {root}")
     return path.resolve()
 
 
@@ -73,17 +84,17 @@ def content_path(root, rel):
         not part or part.startswith(".") or part.endswith((" ", ".")) for part in parts
     )
     if invalid:
-        raise ApiError(400, "路径不允许")
+        raise ApiError(400, "Path not allowed")
     path = (base / rel).resolve()
     if base not in path.parents:
-        raise ApiError(400, "路径不允许")
+        raise ApiError(400, "Path not allowed")
     return path
 
 
 def markdown_path(root, rel):
     path = content_path(root, rel)
     if path.suffix.lower() not in MARKDOWN_SUFFIXES:
-        raise ApiError(400, "只能编辑 Markdown 文件")
+        raise ApiError(400, "Only Markdown files can be edited")
     return path
 
 
@@ -157,12 +168,55 @@ def api_recent():
         return {"folders": [f for f in read_recent() if os.path.isdir(f)]}
 
 
+# ---------- 设置 ----------
+DEFAULT_PREFERENCES = {"font_size": 14, "image_folder": "fig"}
+FONT_SIZE_RANGE = (10, 28)
+
+
+def clean_image_folder(folder):
+    """图片文件夹是相对于打开的文件夹的路径，不能离开它，也不能放进 .git 这样的隐藏文件夹。返回 None 表示不合法。"""
+    if not isinstance(folder, str):
+        return None
+    folder = folder.strip().replace("\\", "/").strip("/")
+    parts = folder.split("/")
+    invalid = not folder or ":" in folder or any(
+        not part or part.startswith(".") or part.endswith((" ", ".")) for part in parts
+    )
+    return None if invalid else folder
+
+
+def clean_preferences(data):
+    """只保留认识的设置，不合法的值用默认值，手动改坏配置文件也不影响启动。"""
+    size = data.get("font_size") if isinstance(data, dict) else None
+    valid_size = isinstance(size, int) and not isinstance(size, bool) and FONT_SIZE_RANGE[0] <= size <= FONT_SIZE_RANGE[1]
+    folder = clean_image_folder(data.get("image_folder")) if isinstance(data, dict) else None
+    return {
+        "font_size": size if valid_size else DEFAULT_PREFERENCES["font_size"],
+        "image_folder": folder or DEFAULT_PREFERENCES["image_folder"],
+    }
+
+
+def api_read_preferences():
+    try:
+        return clean_preferences(json.loads(PREFERENCES_FILE.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return dict(DEFAULT_PREFERENCES)
+
+
+def api_save_preferences(data):
+    if clean_image_folder(data.get("image_folder")) is None:  # 用户正在填写，直接告诉他，而不是悄悄换成默认值
+        raise ApiError(400, "Enter a folder inside the open folder, such as fig or assets/images")
+    preferences = clean_preferences(data)
+    write_file(PREFERENCES_FILE, json.dumps(preferences, ensure_ascii=False, indent=2) + "\n")
+    return preferences
+
+
 PICK_FOLDER_SCRIPT = """
 import tkinter, tkinter.filedialog
 root = tkinter.Tk()
 root.withdraw()
 root.attributes("-topmost", True)
-print(tkinter.filedialog.askdirectory(title="选择要打开的文件夹"), end="")
+print(tkinter.filedialog.askdirectory(title="Choose a folder to open"), end="")
 """
 
 
@@ -172,9 +226,9 @@ def api_pick_folder():
         result = subprocess.run([sys.executable, "-c", PICK_FOLDER_SCRIPT], capture_output=True,
                                 encoding="utf-8", env={**os.environ, "PYTHONUTF8": "1"})
     except OSError as err:
-        raise ApiError(500, f"无法打开选择窗口：{err}")
+        raise ApiError(500, f"Could not open the folder picker: {err}")
     if result.returncode != 0:
-        raise ApiError(500, "无法打开选择窗口，请直接输入文件夹路径")
+        raise ApiError(500, "Could not open the folder picker. Enter the folder path instead.")
     return {"path": str(Path(result.stdout)) if result.stdout else ""}
 
 
@@ -186,11 +240,11 @@ def mtime_of(path):
 def api_read(root, rel):
     path = markdown_path(root, rel)
     if not path.is_file():
-        raise ApiError(404, "文件不存在")
+        raise ApiError(404, "File not found")
     try:
         content = path.read_bytes().decode("utf-8-sig")
     except UnicodeDecodeError:  # 用错误的编码打开再保存会损坏文件，所以直接拒绝
-        raise ApiError(415, "这个文件不是 UTF-8 编码，请先转换编码再编辑")
+        raise ApiError(415, "This file is not UTF-8. Convert its encoding before editing.")
     return {"path": rel, "content": content.replace("\r\n", "\n"), "mtime": mtime_of(path)}
 
 
@@ -204,10 +258,10 @@ def api_save(data):
     path = markdown_path(data.get("root"), data.get("path"))
     content = data.get("content")
     if not isinstance(content, str):
-        raise ApiError(400, "缺少内容")
+        raise ApiError(400, "Missing content")
     exists = path.is_file()
     if not data.get("force") and (not exists or mtime_of(path) != data.get("mtime")):
-        raise ApiError(409, "文件已在别处被修改或删除")
+        raise ApiError(409, "The file was changed or deleted outside the editor")
     if exists and b"\r\n" in path.read_bytes():  # 保持文件原有的换行符，不让 git 显示整个文件都改了
         content = content.replace("\n", "\r\n")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,10 +275,80 @@ def api_new(data):
         rel += ".md"
     path = markdown_path(data.get("root"), rel)
     if path.exists():
-        raise ApiError(409, "这个文件已经存在")
+        raise ApiError(409, "That file already exists")
     path.parent.mkdir(parents=True, exist_ok=True)
     write_file(path, f"# {path.stem}\n\n")
     return {"path": rel}
+
+
+def api_move(data):
+    """移动或重命名文件、文件夹。目标已存在时拒绝，绝不覆盖。"""
+    root = data.get("root")
+    source = content_path(root, data.get("from"))
+    target_rel = (data.get("to") or "").strip().strip("/")
+    if source.is_file():
+        markdown_path(root, data.get("from"))  # 只允许动 Markdown 文件
+        if not target_rel.lower().endswith(MARKDOWN_SUFFIXES):
+            target_rel += ".md"
+    elif not source.is_dir():
+        raise ApiError(404, "File not found")
+    target = content_path(root, target_rel)
+    if source in target.parents:
+        raise ApiError(400, "A folder cannot be moved into itself")
+    # 只改大小写时（a.md → A.md），Windows 上目标看起来已存在，其实是同一个文件
+    if target.exists() and not os.path.samefile(source, target):
+        raise ApiError(409, "An item with that name already exists")
+    if not target.parent.is_dir():
+        raise ApiError(404, "Destination folder not found")
+    # 不用上面规范化后的 target：Windows 上它会变回磁盘上的旧大小写，只改大小写时就改不动了
+    os.rename(source, workspace(root) / target_rel)
+    return {"path": target_rel}
+
+
+def api_delete(data):
+    """把文件移到系统回收站，不永久删除，点错了还能恢复。"""
+    path = markdown_path(data.get("root"), data.get("path"))
+    if not path.is_file():
+        raise ApiError(404, "File not found")
+    if send2trash is None:
+        raise ApiError(500, "Deleting needs the send2trash package. Run: pip install -r requirements.txt")
+    try:
+        send2trash(str(path))
+    except TrashPermissionError as err:
+        raise ApiError(500, f"Could not move the file to the Recycle Bin: {err}")
+    return {"path": data.get("path")}
+
+
+def api_save_image(data):
+    """保存粘贴的图片，返回可以直接写进 Markdown 的相对路径。"""
+    root = data.get("root")
+    document = data.get("path")
+    markdown_path(root, document)
+    extension = IMAGE_TYPES.get(data.get("type"))
+    if extension is None:
+        raise ApiError(415, "Only PNG, JPEG, GIF and WebP images can be pasted")
+    try:
+        image = base64.b64decode(data.get("data") or "", validate=True)
+    except ValueError:
+        raise ApiError(400, "Invalid image data")
+    if not image or len(image) > MAX_IMAGE_BYTES:
+        raise ApiError(413, "The image is empty or larger than 50 MB")
+    folder = api_read_preferences()["image_folder"]
+    content_path(root, f"{folder}/x{extension}")  # 校验文件夹没有离开打开的文件夹
+    (workspace(root) / folder).mkdir(parents=True, exist_ok=True)
+    stem = datetime.now().strftime("image-%Y%m%d-%H%M%S")
+    for attempt in range(1000):
+        name = f"{stem}{'-' + str(attempt) if attempt else ''}{extension}"
+        try:
+            with open(workspace(root) / folder / name, "xb") as file:  # x：文件已存在就失败，绝不覆盖
+                file.write(image)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise ApiError(409, "Could not find a free file name for the image")
+    saved = f"{folder}/{name}"
+    return {"path": saved, "link": quote(posixpath.relpath(saved, posixpath.dirname(document) or "."))}
 
 
 # ---------- 渲染 ----------
@@ -296,7 +420,7 @@ def split_frontmatter(source):
     try:
         meta = yaml.safe_load(match.group(1))
     except yaml.YAMLError as err:
-        return {}, source[match.end():], f"文件开头的 frontmatter 格式有误：\n{err}"
+        return {}, source[match.end():], f"Invalid frontmatter at the top of the file:\n{err}"
     if not isinstance(meta, dict):
         return {}, source, ""
     return meta, source[match.end():], ""
@@ -363,14 +487,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def respond(self, handler):
         if not self.request_allowed():
-            self.send_json(403, {"error": "请求被拒绝"})
+            self.send_json(403, {"error": "Request refused"})
             return
         try:
             handler()
         except ApiError as err:
             self.send_json(err.status, {"error": err.message})
         except OSError as err:
-            self.send_json(500, {"error": f"读写文件失败：{err}"})
+            self.send_json(500, {"error": f"Could not read or write the file: {err}"})
 
     def do_GET(self):
         self.respond(self.handle_get)
@@ -388,6 +512,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_body(200, CODE_CSS.encode("utf-8"), "text/css; charset=utf-8")
         elif url.path == "/api/recent":
             self.send_json(200, api_recent())
+        elif url.path == "/api/preferences":
+            self.send_json(200, api_read_preferences())
         elif url.path == "/api/tree":
             self.send_json(200, api_tree(query.get("root")))
         elif url.path == "/api/file":
@@ -396,12 +522,12 @@ class Handler(BaseHTTPRequestHandler):
             path = content_path(query.get("root"), query.get("path"))
             content_type = mimetypes.guess_type(path.name)[0] or ""
             if not content_type.startswith("image/"):  # 预览只需要图片，其他文件不对外提供
-                raise ApiError(403, "只能读取图片")
+                raise ApiError(403, "Only images can be read")
             if not path.is_file():
-                raise ApiError(404, "文件不存在")
+                raise ApiError(404, "File not found")
             self.send_body(200, path.read_bytes(), content_type)
         else:
-            raise ApiError(404, "找不到页面")
+            raise ApiError(404, "Page not found")
 
     def handle_post(self):
         try:
@@ -410,14 +536,22 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError
         except ValueError:
-            raise ApiError(400, "请求格式错误")
+            raise ApiError(400, "Invalid request")
         path = urlsplit(self.path).path
         if path == "/api/pick-folder":
             self.send_json(200, api_pick_folder())
             return
-        routes = {"/api/save": api_save, "/api/new": api_new, "/api/render": api_render}
+        routes = {
+            "/api/save": api_save,
+            "/api/new": api_new,
+            "/api/move": api_move,
+            "/api/delete": api_delete,
+            "/api/image": api_save_image,
+            "/api/render": api_render,
+            "/api/preferences": api_save_preferences,
+        }
         if path not in routes:
-            raise ApiError(404, "找不到页面")
+            raise ApiError(404, "Page not found")
         self.send_json(200, routes[path](data))
 
 
@@ -427,7 +561,7 @@ class Server(ThreadingHTTPServer):
 
 def serve(port=DEFAULT_PORT):
     server = Server(("127.0.0.1", port), Handler)
-    print(f"编辑器地址：http://localhost:{port} （按 Ctrl+C 停止）", flush=True)
+    print(f"Markdown Editor: http://localhost:{port} (press Ctrl+C to stop)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

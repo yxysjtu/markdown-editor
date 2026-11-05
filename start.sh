@@ -11,21 +11,21 @@ export PYTHONUTF8=1 # 否则 Git Bash 里中文提示会乱码
 fail() {
   echo
   echo "$1"
-  read -r -p "按回车键关闭..."
+  read -r -p "Press Enter to close..."
   exit 1
 }
 
 if [ -n "$1" ]; then
-  FOLDER=$(cd "$1" 2>/dev/null && pwd -W) || fail "找不到文件夹：$1"
+  FOLDER=$(cd "$1" 2>/dev/null && pwd -W) || fail "Folder not found: $1"
   URL="$URL?root=$(python -c 'import sys, urllib.parse as u; print(u.quote(sys.argv[1], safe=""))' "$FOLDER")"
 fi
 
-cd "$(dirname "$0")" || fail "找不到编辑器所在的文件夹"
+cd "$(dirname "$0")" || fail "Could not find the editor folder"
 
 if (exec 3<>"/dev/tcp/localhost/$PORT") 2>/dev/null; then
-  echo "编辑器已在运行，直接打开：$URL"
+  echo "The editor is already running. Opening: $URL"
   start chrome "$URL"
-  read -r -t 3 -p "3 秒后自动关闭此窗口..."
+  read -r -t 3 -p "This window closes in 3 seconds..."
   exit 0
 fi
 
@@ -33,4 +33,4 @@ fi
   sleep 1 # 等服务启动
   start chrome "$URL"
 ) &
-python editor.py "$PORT" || fail "编辑器启动失败。如果提示缺少模块，请先运行：pip install -r requirements.txt"
+python editor.py "$PORT" || fail "Could not start the editor. If a module is missing, run: pip install -r requirements.txt"

@@ -1,15 +1,19 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Markdown 编辑器</title>
+<title>Markdown Editor</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <link rel="stylesheet" href="/code.css">
 <link rel="stylesheet" href="/editor.css">
 <script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/markdown/markdown.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/yaml/yaml.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/yaml-frontmatter/yaml-frontmatter.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/mode/overlay.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/continuelist.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
@@ -17,46 +21,94 @@
 </head>
 <body class="mode-split no-file">
 <header class="editor-bar">
-  <button type="button" id="open-folder">打开文件夹</button>
-  <button type="button" id="new-file" hidden>新建文件</button>
+  <button type="button" id="toggle-tree" aria-controls="file-tree" hidden></button>
+  <button type="button" id="open-folder" title="Open Folder" aria-label="Open Folder">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.5h8.4A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>
+  </button>
+  <button type="button" id="new-file" title="New File" aria-label="New File" hidden>+</button>
+  <button type="button" id="delete-file" title="Move current file to the Recycle Bin" aria-label="Move current file to the Recycle Bin" disabled hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/></svg>
+  </button>
+  <button type="button" id="open-preferences" title="Settings" aria-label="Settings">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0-1.2-2.9h-.2a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+  </button>
   <span id="file-path" class="file-path"></span>
   <span id="save-status" class="save-status" role="status"></span>
-  <div class="mode-switch" role="group" aria-label="显示方式">
-    <button type="button" data-mode="edit">编辑</button>
-    <button type="button" data-mode="split">分栏</button>
-    <button type="button" data-mode="preview">预览</button>
+  <div class="mode-switch" role="group" aria-label="View mode">
+    <button type="button" data-mode="edit">Edit</button>
+    <button type="button" data-mode="split">Split</button>
+    <button type="button" data-mode="preview">Preview</button>
   </div>
 </header>
 
+<dialog id="preferences" class="preferences" aria-labelledby="preferences-title">
+  <form id="preferences-form" method="dialog">
+    <h2 id="preferences-title">Settings</h2>
+    <label class="pref-row" for="pref-font-size">
+      <span>Editor font size</span>
+      <span class="pref-control">
+        <input id="pref-font-size" type="range" min="10" max="28" step="1">
+        <output id="pref-font-size-value" for="pref-font-size"></output>
+      </span>
+    </label>
+    <label class="pref-row" for="pref-image-folder">
+      <span>Image folder</span>
+      <input id="pref-image-folder" class="pref-text" type="text" spellcheck="false" autocomplete="off">
+      <span class="pref-hint">Pasted images are saved here, relative to the open folder.</span>
+    </label>
+    <p id="pref-sample" class="pref-sample"># Sample 123, $x^2$ and `code`</p>
+    <p id="pref-error" class="pref-error" hidden></p>
+    <div class="pref-actions">
+      <button type="button" id="pref-reset" class="pref-reset">Reset to Default</button>
+      <button type="button" id="pref-cancel">Cancel</button>
+      <button type="submit" id="pref-save" class="pref-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <main id="welcome" class="welcome" hidden>
-  <h1>Markdown 编辑器</h1>
-  <p>选择一个文件夹，开始编辑里面的 Markdown 文件。</p>
+  <h1>Markdown Editor</h1>
+  <p>Choose a folder to start editing its Markdown files.</p>
   <div class="welcome-open">
-    <button type="button" id="pick-folder">选择文件夹</button>
+    <button type="button" id="pick-folder">Choose Folder</button>
     <form id="path-form" class="path-form">
-      <input id="path-input" type="text" placeholder="或输入完整路径，如 C:\Users\me\notes" aria-label="文件夹路径" autocomplete="off">
-      <button type="submit">打开</button>
+      <input id="path-input" type="text" placeholder="Or enter a full path, e.g. C:\Users\me\notes" aria-label="Folder path" autocomplete="off">
+      <button type="submit">Open</button>
     </form>
   </div>
   <p id="welcome-error" class="welcome-error" hidden></p>
   <section id="recent" hidden>
-    <h2>最近打开</h2>
+    <h2>Recent</h2>
     <div id="recent-list" class="recent-list"></div>
   </section>
 </main>
 
 <div id="workspace" class="editor-main" hidden>
-  <nav id="file-tree" class="file-tree" aria-label="文件"></nav>
+  <nav id="file-tree" class="file-tree" aria-label="Files"></nav>
   <div id="editor-pane" class="editor-pane"></div>
-  <div id="preview-pane" class="preview-pane">
-    <div id="preview-error" class="preview-error" hidden></div>
-    <article id="preview-doc" class="doc">
-      <header id="preview-head" class="doc-head" hidden>
-        <h1 id="preview-title"></h1>
-        <div class="doc-meta"><time id="preview-date"></time><div id="preview-tags" class="tags"></div></div>
-      </header>
-      <div id="preview-body" class="prose"></div>
-    </article>
+  <div class="preview-wrap">
+    <div id="preview-pane" class="preview-pane">
+      <div id="preview-error" class="preview-error" hidden></div>
+      <article id="preview-doc" class="doc">
+        <header id="preview-head" class="doc-head" hidden>
+          <h1 id="preview-title"></h1>
+          <div class="doc-meta"><time id="preview-date"></time><div id="preview-tags" class="tags"></div></div>
+        </header>
+        <div id="preview-body" class="prose"></div>
+      </article>
+    </div>
+    <div id="toc" class="toc" hidden>
+      <button type="button" id="toc-rail" class="toc-rail" aria-label="Table of contents" aria-controls="toc-panel"></button>
+      <nav id="toc-panel" class="toc-panel" aria-label="Table of contents">
+        <div class="toc-head">
+          <span>Table of Contents</span>
+          <button type="button" id="toc-pin" class="toc-pin" aria-label="Pin table of contents" aria-pressed="false" title="Pin table of contents">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l-1 7 4 4v2H6v-2l4-4-1-7zM12 16v5"/></svg>
+          </button>
+        </div>
+        <div id="toc-list" class="toc-list"></div>
+      </nav>
+    </div>
   </div>
 </div>
 </body>
