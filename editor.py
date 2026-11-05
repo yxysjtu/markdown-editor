@@ -46,6 +46,7 @@ STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
     "/editor.css": ("editor.css", "text/css; charset=utf-8"),
+    "/document.css": ("document.css", "text/css; charset=utf-8"),
 }
 MARKDOWN_SUFFIXES = (".md", ".markdown")
 SKIP_DIRS = {"node_modules", "__pycache__", "venv"}  # 依赖和缓存，里面的 Markdown 不是你写的
@@ -169,7 +170,7 @@ def api_recent():
 
 
 # ---------- 设置 ----------
-DEFAULT_PREFERENCES = {"font_size": 14, "image_folder": "fig"}
+DEFAULT_PREFERENCES = {"font_size": 14, "image_folder": "fig", "image_save_base": "current"}
 FONT_SIZE_RANGE = (10, 28)
 
 
@@ -190,9 +191,16 @@ def clean_preferences(data):
     size = data.get("font_size") if isinstance(data, dict) else None
     valid_size = isinstance(size, int) and not isinstance(size, bool) and FONT_SIZE_RANGE[0] <= size <= FONT_SIZE_RANGE[1]
     folder = clean_image_folder(data.get("image_folder")) if isinstance(data, dict) else None
+    
+    # 新增：解析并校验保存路径基准
+    save_base = data.get("image_save_base") if isinstance(data, dict) else None
+    valid_save_base = save_base in ("root", "current")
+
     return {
         "font_size": size if valid_size else DEFAULT_PREFERENCES["font_size"],
         "image_folder": folder or DEFAULT_PREFERENCES["image_folder"],
+        # 新增：返回合法的路径模式
+        "image_save_base": save_base if valid_save_base else DEFAULT_PREFERENCES["image_save_base"],
     }
 
 
@@ -333,23 +341,39 @@ def api_save_image(data):
         raise ApiError(400, "Invalid image data")
     if not image or len(image) > MAX_IMAGE_BYTES:
         raise ApiError(413, "The image is empty or larger than 50 MB")
-    folder = api_read_preferences()["image_folder"]
-    content_path(root, f"{folder}/x{extension}")  # 校验文件夹没有离开打开的文件夹
-    (workspace(root) / folder).mkdir(parents=True, exist_ok=True)
+    
+    # ======== 修改开始 ========
+    prefs = api_read_preferences()
+    folder = prefs["image_folder"]
+    save_base = prefs["image_save_base"]
+
+    # 判断是保存在根目录还是当前文件所在目录
+    if save_base == "current":
+        # 获取当前 Markdown 文件所在的目录，并与图片文件夹名拼接
+        doc_dir = posixpath.dirname(document)
+        effective_folder = posixpath.join(doc_dir, folder) if doc_dir else folder
+    else:
+        effective_folder = folder
+
+    # 后续操作全部使用 effective_folder 替换原本的 folder
+    content_path(root, f"{effective_folder}/x{extension}")  # 校验文件夹没有离开打开的文件夹
+    (workspace(root) / effective_folder).mkdir(parents=True, exist_ok=True)
     stem = datetime.now().strftime("image-%Y%m%d-%H%M%S")
     for attempt in range(1000):
         name = f"{stem}{'-' + str(attempt) if attempt else ''}{extension}"
         try:
-            with open(workspace(root) / folder / name, "xb") as file:  # x：文件已存在就失败，绝不覆盖
+            with open(workspace(root) / effective_folder / name, "xb") as file:  # x：文件已存在就失败，绝不覆盖
                 file.write(image)
             break
         except FileExistsError:
             continue
     else:
         raise ApiError(409, "Could not find a free file name for the image")
-    saved = f"{folder}/{name}"
+    
+    saved = f"{effective_folder}/{name}"
+    # ======== 修改结束 ========
+    
     return {"path": saved, "link": quote(posixpath.relpath(saved, posixpath.dirname(document) or "."))}
-
 
 # ---------- 渲染 ----------
 def highlight_code(code, lang, _attrs):

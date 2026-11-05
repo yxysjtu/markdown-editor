@@ -1,0 +1,55 @@
+/* 文档样式：编辑器的预览和导出的 HTML、PDF 共用 */
+:root {
+  --bg: #fdfdfd;
+  --surface: #f4f4f4;
+  --surface-hover: #ececec;
+  --border: #e4e4e4;
+  --text: #222;
+  --muted: #6e6e6e;
+  --accent: #1f5fa8;
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.7 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+
+.doc-head { margin-bottom: 28px; }
+.doc-head h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.3; }
+.doc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--muted); font-size: 14px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { padding: 0 8px; border-radius: 4px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 22px; }
+.prose { overflow-wrap: break-word; }
+.prose h1, .prose h2, .prose h3, .prose h4 { margin: 1.8em 0 .6em; line-height: 1.35; }
+.prose h1 { font-size: 28px; }
+.prose h2 { font-size: 22px; }
+.prose h3 { font-size: 18px; }
+.prose h4 { font-size: 16px; }
+.prose > :first-child { margin-top: 0; }
+.prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.prose img { max-width: 100%; height: auto; }
+.prose blockquote { margin: 1em 0; padding: 2px 16px; border-left: 3px solid var(--border); color: #555; }
+.prose hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
+.prose li > p { margin: .3em 0; }
+.prose code { padding: 1px 5px; border-radius: 4px; background: var(--surface); font: .9em/1.5 Consolas, Menlo, "Courier New", monospace; }
+.prose pre { overflow-x: auto; padding: 14px 16px; border-radius: var(--radius); background: var(--surface); line-height: 1.5; }
+.prose pre code { padding: 0; background: none; font-size: 14px; }
+.prose table { display: block; overflow-x: auto; border-collapse: collapse; margin: 1em 0; }
+.prose th, .prose td { padding: 6px 12px; border: 1px solid var(--border); text-align: left; }
+.prose th { background: var(--surface); }
+.prose ul.contains-task-list { list-style: none; padding-left: 4px; }
+.prose .math-display { display: block; overflow-x: auto; overflow-y: hidden; }
+
+/* 导出的文件 */
+body.exported .doc { max-width: 760px; margin: 0 auto; padding: 40px 24px 64px; }
+
+/* 打印和 PDF：纸上不能左右滚动，长内容要换行；保留代码块和表头的底色 */
+@media print {
+  @page { margin: 18mm 16mm; }
+  body { background: #fff; font-size: 12pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body.exported .doc { max-width: none; padding: 0; }
+  .prose pre, .prose pre code { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .prose table { display: table; overflow: visible; }
+  .prose .math-display { overflow: visible; }
+  .prose h1, .prose h2, .prose h3, .prose h4 { break-after: avoid; }
+  .prose img, .prose tr, .prose blockquote, .prose .math-display { break-inside: avoid; }
+}

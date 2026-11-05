@@ -686,6 +686,8 @@
     cm.swapDoc(CodeMirror.Doc('', 'markdown-editor'));
     cm.setOption('readOnly', true);
     deleteButton.disabled = true;
+    exportToggle.disabled = true;
+    closeExportMenu();
     document.body.classList.add('no-file');
     document.getElementById('toc').hidden = true;
     previewBody.textContent = '';
@@ -707,6 +709,178 @@
       showStatus('Moved to the Recycle Bin');
       return loadTree();
     }).catch(function (err) { showStatus(err.message, true); });
+  });
+
+  // ---------- 导出 ----------
+  var KATEX_CSS = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css';
+  var exportToggle = document.getElementById('export-toggle');
+  var exportMenu = document.getElementById('export-menu');
+  document.getElementById('export').hidden = false;
+
+  function closeExportMenu() {
+    exportMenu.hidden = true;
+    exportToggle.setAttribute('aria-expanded', 'false');
+  }
+
+  function fileStem(path) {
+    return path.split('/').pop().replace(/\.[^.]+$/, '');
+  }
+
+  function escapeHtml(text) {
+    var el = document.createElement('div');
+    el.textContent = text;
+    return el.innerHTML;
+  }
+
+  function download(name, content, type) {
+    var url = URL.createObjectURL(new Blob([content], { type: type }));
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // 把本地图片嵌进文件，导出的文件单独发给别人也能显示。返回没能嵌入的图片数量
+  function embedImages(container) {
+    var failed = 0;
+    var images = Array.prototype.filter.call(container.querySelectorAll('img'), function (img) {
+      return (img.getAttribute('src') || '').indexOf('/files?') === 0;
+    });
+    return Promise.all(images.map(function (img) {
+      return fetch(img.getAttribute('src')).then(function (response) {
+        if (!response.ok) throw new Error('not found');
+        return response.blob();
+      }).then(blobToDataUrl).then(function (dataUrl) {
+        img.setAttribute('src', dataUrl);
+      }).catch(function () { failed++; });
+    })).then(function () { return failed; });
+  }
+
+  // 生成独立的 HTML：内容是当前编辑器里的（包括还没保存的改动），样式都写在文件里
+  function buildExportHtml(path, content) {
+    return Promise.all([
+      request('/api/render', { root: root, path: path, content: content }),
+      fetch('/document.css').then(function (r) { return r.text(); }),
+      fetch('/code.css').then(function (r) { return r.text(); })
+    ]).then(function (results) {
+      var data = results[0];
+      var body = document.createElement('div');
+      body.innerHTML = data.html;
+      body.querySelectorAll('[data-line]').forEach(function (el) { el.removeAttribute('data-line'); });
+      if (window.renderMathInElement) {
+        renderMathInElement(body, {
+          delimiters: [
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true }
+          ],
+          throwOnError: false
+        });
+      }
+      return embedImages(body).then(function (failedImages) {
+        var title = data.title || fileStem(path);
+        var head = '';
+        if (data.title || data.date || data.tags.length) {
+          head = '<header class="doc-head">' + (data.title ? '<h1>' + escapeHtml(data.title) + '</h1>' : '') +
+            '<div class="doc-meta">' + (data.date ? '<time>' + escapeHtml(data.date) + '</time>' : '') +
+            '<div class="tags">' + data.tags.map(function (tag) { return '<span class="tag">' + escapeHtml(tag) + '</span>'; }).join('') + '</div>' +
+            '</div></header>';
+        }
+        var html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
+          '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+          '<title>' + escapeHtml(title) + '</title>\n' +
+          (body.querySelector('.katex') ? '<link rel="stylesheet" href="' + KATEX_CSS + '">\n' : '') +
+          '<style>\n' + results[1] + '\n' + results[2] + '\n</style>\n</head>\n' +
+          '<body class="exported">\n<article class="doc">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
+        return { html: html, failedImages: failedImages };
+      });
+    });
+  }
+
+  // 用隐藏的 iframe 打印，只打印文档，不带编辑器界面。在打印窗口里选“另存为 PDF”
+  function printHtml(html, name) {
+    return new Promise(function (resolve) {
+      var frame = document.createElement('iframe');
+      frame.style.cssText = 'position:fixed;right:-10000px;top:0;width:800px;height:600px;border:0';
+      frame.setAttribute('aria-hidden', 'true');
+      // 沙箱不允许运行脚本：Markdown 里可能带 <script>，而这个 iframe 和编辑器同源，能调用写文件的接口
+      frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+      frame.onload = function () {
+        var win = frame.contentWindow;
+        var pageTitle = document.title;
+        var finished = false;
+        var done = function () {
+          if (finished) return;
+          finished = true;
+          document.title = pageTitle;
+          frame.remove();
+          resolve();
+        };
+        win.document.fonts.ready.then(function () {
+          document.title = name; // Chrome 用这个作为默认的 PDF 文件名
+          win.focus();
+          win.print(); // Chrome 会在这里等打印窗口关闭
+          done();
+        });
+      };
+      frame.srcdoc = html;
+      document.body.appendChild(frame);
+    });
+  }
+
+  function exportCurrent(format) {
+    if (!current) return;
+    var path = current.path;
+    var content = cm.getValue();
+    var stem = fileStem(path);
+    closeExportMenu();
+    if (format === 'md') {
+      download(path.split('/').pop(), content, 'text/markdown;charset=utf-8');
+      showStatus('Exported ' + stem + '.md');
+      return;
+    }
+    showStatus('Preparing export…');
+    buildExportHtml(path, content).then(function (result) {
+      var note = result.failedImages ? ' (' + result.failedImages + ' image(s) could not be embedded)' : '';
+      if (format === 'html') {
+        download(stem + '.html', result.html, 'text/html;charset=utf-8');
+        showStatus('Exported ' + stem + '.html' + note, !!result.failedImages);
+        return null;
+      }
+      showStatus('Choose “Save as PDF” in the print dialog' + note, !!result.failedImages);
+      return printHtml(result.html, stem);
+    }).catch(function (err) {
+      showStatus('Could not export: ' + err.message, true);
+    });
+  }
+
+  exportToggle.addEventListener('click', function () {
+    exportMenu.hidden = !exportMenu.hidden;
+    exportToggle.setAttribute('aria-expanded', String(!exportMenu.hidden));
+  });
+  exportMenu.addEventListener('click', function (event) {
+    var button = event.target.closest('button');
+    if (button) exportCurrent(button.dataset.format);
+  });
+  document.addEventListener('click', function (event) {
+    if (!event.target.closest('#export')) closeExportMenu();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !exportMenu.hidden) {
+      closeExportMenu();
+      exportToggle.focus();
+    }
   });
 
   // ---------- 粘贴图片 ----------
@@ -761,6 +935,7 @@
     document.body.classList.remove('no-file');
     cm.setOption('readOnly', false);
     deleteButton.disabled = false;
+    exportToggle.disabled = false;
     cm.swapDoc(CodeMirror.Doc(data.content, 'markdown-editor')); // 换一个文档，撤销不会跨文件
     filePath.textContent = data.path;
     document.title = data.path.split('/').pop() + ' · Markdown Editor';

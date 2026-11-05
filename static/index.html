@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <link rel="stylesheet" href="/code.css">
+<link rel="stylesheet" href="/document.css">
 <link rel="stylesheet" href="/editor.css">
 <script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.js"></script>
@@ -31,6 +32,16 @@
   <button type="button" id="delete-file" title="Move current file to the Recycle Bin" aria-label="Move current file to the Recycle Bin" disabled hidden>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/></svg>
   </button>
+  <div id="export" class="export" hidden>
+    <button type="button" id="export-toggle" title="Export" aria-label="Export" aria-haspopup="menu" aria-expanded="false" disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M4 20h16"/></svg>
+    </button>
+    <div id="export-menu" class="export-menu" role="menu" hidden>
+      <button type="button" role="menuitem" data-format="md">Markdown (.md)</button>
+      <button type="button" role="menuitem" data-format="html">HTML (.html)</button>
+      <button type="button" role="menuitem" data-format="pdf">PDF (print dialog)</button>
+    </div>
+  </div>
   <button type="button" id="open-preferences" title="Settings" aria-label="Settings">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0-1.2-2.9h-.2a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
   </button>
