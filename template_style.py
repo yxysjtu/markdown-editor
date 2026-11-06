@@ -1,7 +1,8 @@
-"""学术报告的自定义样式：把 frontmatter 里的 style 选项检查一遍，再生成样式文字。
+"""模板的样式：检查 frontmatter 里的 style 选项和模板自带的 CSS，再生成样式文字。
 
-只有这里列出的选项可以用，值也都要通过检查。Markdown 文件可能来自别人，
-不能让 style 里的内容变成任意 CSS。默认样式在 templates/report.css，这里生成的规则放在它后面，只覆盖写了的项。
+选项有三种：所有模板都能用的页面选项、内置报告专用的选项、模板 CSS 里用到的变量（var(--accent) 对应 style 里的 accent）。
+Markdown 文件和模板可能来自别人，所以值都要通过检查，模板 CSS 不能联网，也不能影响文档以外的内容。
+报告的默认样式在 templates/report.css，这里生成的规则放在它后面，只覆盖写了的项。
 """
 import re
 
@@ -19,6 +20,22 @@ PAPERS = {"A3": (29.7, 42), "A4": (21, 29.7), "A5": (14.8, 21), "B5": (17.6, 25)
 DEFAULT_PAPER = PAPERS["A4"]
 DEFAULT_MARGIN = (2.54, 3.17, 2.54, 3.17)  # 上右下左，单位是 cm
 NUMBER_SEPARATORS = {"2-1": "-", "2.1": ".", "1": ""}  # 空的表示全文连续编号，不带章号
+
+DOC_CLASSES = {"report": "academic", "none": "custom"}  # extends 的值 -> 文档的 class
+DEFAULT_MARGINS = {"report": DEFAULT_MARGIN, "none": (1.8, 1.6, 1.8, 1.6)}  # none 和 document.css 里普通文档的页边距一样
+
+# 模板 CSS 放在这个选择器里面。写 h1 { } 只影响文档内容，写 body { } 也不会匹配到编辑器界面；
+# 同时优先级够高，能盖过 document.css 和 report.css 里最长的选择器（4 个 class）
+CSS_SCOPE = ".doc" * 5
+# 注释、字符串和不带引号的 url() 里的括号都不算数，要从左到右一次认出来：字符串里可以有 /*，注释里也可以有引号
+CSS_TOKEN = re.compile(r'''(/\*.*?\*/)|"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'|url\(\s*[^\'"\s)][^)]*\)''', re.S | re.I)
+CSS_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})\s?|\\(.)", re.S)
+CSS_URL = re.compile(r"""url\(\s*['"]?([^'")\s]*)""")
+CSS_NETWORK = re.compile(r"@import|@namespace|\b(?:src|image|image-set|element)\(")
+CSS_DROPPED = re.compile(r"@(page|font-face)\b", re.I)  # 嵌套在选择器里不生效
+CSS_VARIABLE = re.compile(r"var\(\s*--([\w-]+)")
+VARIABLE_VALUE = re.compile(r"""[\w\s#%.,()+*/"'-]+""")
+VARIABLE_NETWORK = re.compile(r"\b(?:url|src|image|image-set|element)\(", re.I)
 
 
 def size(value):
@@ -133,20 +150,90 @@ TEXT_OPTIONS = {
     "code-label": (label, "lst"),
     "appendix-label": (label, "appendix"),
 }
-PAGE_OPTIONS = {"paper": paper, "page-margin": page_margin, "page-numbers": switch, "three-line-table": switch}
+PAGE_OPTIONS = {"paper": paper, "page-margin": page_margin, "page-numbers": switch}  # 所有模板都能用
 
 
-def checker(name):
+def checker(name, base):
+    if name in PAGE_OPTIONS:
+        return PAGE_OPTIONS[name]
+    if base != "report":
+        return None
     if name in CSS_OPTIONS:
         return CSS_OPTIONS[name][0]
     if name in TEXT_OPTIONS:
         return TEXT_OPTIONS[name][0]
-    return PAGE_OPTIONS.get(name)
+    return switch if name == "three-line-table" else None
 
 
-def read_style(*layers):
-    """按顺序合并几层 style，后面的优先。返回 (检查过的值, 问题列表)。写错的项不生效，仍用前一层的值。"""
+def variable_value(value):
+    """模板 CSS 变量的值。这里不知道它的含义，只保证它跑不出自己这一条声明。"""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError("a value like #1a5fb4, 12pt or 小四")
+    text = str(value).strip()
+    if text in SIZE_NAMES:
+        return f"{SIZE_NAMES[text]}pt"
+    depth = 0
+    for char in text:
+        depth += (char == "(") - (char == ")")
+        if depth < 0:
+            break
+    if (not VARIABLE_VALUE.fullmatch(text) or depth != 0 or "/*" in text or VARIABLE_NETWORK.search(text)
+            or text.count('"') % 2 or text.count("'") % 2):
+        raise ValueError("a value like #1a5fb4, 12pt or 小四, without ; : { } < > or links")
+    return text
+
+
+def decode_escape(match):
+    if match.group(1):
+        code = int(match.group(1), 16)
+        return chr(code) if 0 < code <= 0x10FFFF else ""
+    return match.group(2)
+
+
+def without_comments(text):
+    return CSS_TOKEN.sub(lambda match: " " if match.group(1) else match.group(0), text)
+
+
+def css_problem(text):
+    """模板 CSS 不能跑出 CSS_SCOPE，不能结束 <style>，也不能发网络请求。有问题时整个文件都不用。"""
+    if "</style" in text.lower():
+        return 'it must not contain "</style"'
+    bare = CSS_TOKEN.sub(" ", text)
+    if "/*" in bare:
+        return "a comment is not closed"
+    if '"' in bare or "'" in bare:
+        return "a string is not closed"
+    if "\\" in bare:  # 转义可以把关键字和括号藏起来
+        return "backslashes are only allowed inside strings"
+    depth = 0
+    for char in bare:
+        depth += (char == "{") - (char == "}")
+        if depth < 0:
+            return 'there is an extra "}"'
+    if depth != 0:
+        return 'a "{" is not closed'
+    decoded = CSS_ESCAPE.sub(decode_escape, without_comments(text)).lower()
+    if CSS_NETWORK.search(decoded) or any(not url.startswith("data:") for url in CSS_URL.findall(decoded)):
+        return "it must not load anything from outside: @import is not allowed, and url() only works with data:"
+    return ""
+
+
+def read_css(text, name):
+    """检查模板 CSS。返回 (放进 CSS_SCOPE 之后的样式, 它用到的变量名, 问题列表)。"""
+    problem = css_problem(text)
+    if problem:
+        return "", set(), [f'Template CSS "{name}" was not used: {problem}.']
+    code = without_comments(text)
+    problems = [f'Template CSS "{name}": @{rule.lower()} does not work here. '
+                + ("Use the paper, page-margin and page-numbers options." if rule.lower() == "page" else "Use fonts installed on the computer.")
+                for rule in dict.fromkeys(CSS_DROPPED.findall(code))]
+    return f"{CSS_SCOPE} {{\n{text}\n}}", set(CSS_VARIABLE.findall(code)), problems
+
+
+def read_style(layers, base, css_variables=()):
+    """按顺序合并几层 style，后面的优先。返回 (选项的值, 模板 CSS 变量的值, 问题列表)。写错的项不生效，仍用前一层的值。"""
     values = {}
+    variables = {}
     problems = []
     for layer in layers:
         if layer is None:
@@ -155,15 +242,18 @@ def read_style(*layers):
             problems.append('"style" should be a list of "name: value" lines')
             continue
         for name, value in layer.items():
-            check = checker(name)
+            check = checker(name, base)
+            target = values
+            if check is None and name in css_variables:
+                check, target = variable_value, variables
             if check is None:
                 problems.append(f'Unknown style option "{name}"')
                 continue
             try:
-                values[name] = check(value)
+                target[name] = check(value)
             except ValueError as err:
                 problems.append(f'Invalid value for style option "{name}": {value}. Expected {err}')
-    return values, problems
+    return values, variables, problems
 
 
 def apply_text(text, values):
@@ -179,32 +269,37 @@ def centimeters(length):
     return f"{length:g}cm"
 
 
-def page_rules(values):
+def page_rules(values, base):
     rules = []
+    page = "@page report" if base == "report" else "@page"  # 普通文档的打印用的就是不带名字的 @page
+    sheet_class = DOC_CLASSES[base]
     descriptors = []
     if "paper" in values:
         width, height = values["paper"]
         descriptors.append(f"size: {centimeters(width)} {centimeters(height)};")
     if "page-margin" in values:
         descriptors.append("margin: " + " ".join(centimeters(side) for side in values["page-margin"]) + ";")
-    if values.get("page-numbers") is False:
-        descriptors.append('@bottom-center { content: ""; }')
+    if "page-numbers" in values:
+        content = "counter(page)" if values["page-numbers"] else '""'
+        descriptors.append(f"@bottom-center {{ content: {content}; }}")
     if descriptors:
-        rules.append("@page report { " + " ".join(descriptors) + " }")
+        rules.append(page + " { " + " ".join(descriptors) + " }")
     if "paper" in values or "page-margin" in values:  # 预览和导出的 HTML 也要显示一样大的纸
         width, height = values.get("paper", DEFAULT_PAPER)
-        top, right, bottom, left = values.get("page-margin", DEFAULT_MARGIN)
+        top, right, bottom, left = values.get("page-margin", DEFAULT_MARGINS[base])
         sheet = f"max-width: {centimeters(width)}; min-height: {centimeters(height)};"
-        rules.append("@container (min-width: 620.01px) { .preview-pane .doc.academic { "
+        rules.append(f"@container (min-width: 620.01px) {{ .preview-pane .doc.{sheet_class} {{ "
                      f"{sheet} padding: {centimeters(top)} min({right / width * 100:.2f}%, {centimeters(right)}) "
                      f"{centimeters(bottom)} min({left / width * 100:.2f}%, {centimeters(left)}); }} }}")
-        rules.append("@media screen { body.exported .doc.academic { "
+        rules.append(f"@media screen {{ body.exported .doc.{sheet_class} {{ "
                      f"{sheet} padding: {' '.join(centimeters(side) for side in (top, right, bottom, left))}; }} }}")
     return rules
 
 
-def build_css(values):
-    rules = page_rules(values)
+def build_css(values, variables, base):
+    rules = page_rules(values, base)
+    if variables:
+        rules.append(".doc { " + " ".join(f"--{name}: {value};" for name, value in variables.items()) + " }")
     for name, (_, selector, prop) in CSS_OPTIONS.items():
         if name in values:
             rules.append(f"{selector} {{ {prop}: {values[name]}; }}")

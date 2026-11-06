@@ -34,7 +34,7 @@ from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 
 import academic
-import report_style
+import template_style
 
 try:
     from send2trash import TrashPermissionError, send2trash
@@ -527,9 +527,13 @@ def is_template_file(template):
     return isinstance(template, str) and (template.startswith(("./", "../")) or template.lower().endswith(".md"))
 
 
+def template_target(rel, path):
+    return posixpath.normpath(posixpath.join(posixpath.dirname(rel), path))
+
+
 def read_template_file(root, rel, template):
     """template: ./my-school.md 指向的文件，路径相对于当前文件。返回 (它的 frontmatter, 问题)。"""
-    target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), template))
+    target = template_target(rel, template)
     try:
         content = api_read(root, target)["content"]
     except ApiError as err:  # 打开的文件夹以外的路径也会到这里
@@ -537,34 +541,68 @@ def read_template_file(root, rel, template):
     meta, _, problem = split_frontmatter(content)
     if problem:
         return {}, f'Template file "{template}": {problem}'
-    if meta.get("extends") != "report":
-        return {}, f'Template file "{template}" must have "extends: report" at the top.'
+    if meta.get("extends") not in template_style.DOC_CLASSES:
+        return {}, f'Template file "{template}" must have "extends: report" or "extends: none" at the top.'
     return meta, ""
+
+
+def find_template(meta, root, rel):
+    """frontmatter 选的模板。返回 (基础, 模板的设置, 模板文件的路径, 问题)。基础是 report 或 none，没有模板时是 None。"""
+    template = meta.get("template")
+    if not template:  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果。它的 style 就是文档的 style
+        extends = meta.get("extends")
+        if not extends:
+            return None, {}, rel, []
+        if extends not in template_style.DOC_CLASSES:
+            return None, {}, rel, [f'"extends" must be report or none, not "{extends}"']
+        return extends, {"css": meta.get("css")}, rel, []
+    if template == "report":
+        return "report", {}, rel, []
+    if not is_template_file(template):
+        return None, {}, rel, [f'Unknown template "{template}". Use "report", or the path of a template file like ./my-template.md']
+    settings, problem = read_template_file(root, rel, template)
+    if problem:
+        return None, {}, rel, [problem]
+    return settings["extends"], settings, template_target(rel, template), []
+
+
+def read_template_css(root, template_path, css):
+    """模板写的 css: ./x.css，路径相对于模板文件。返回 (样式, 用到的变量名, 问题)。"""
+    if not css:
+        return "", set(), []
+    try:
+        if not isinstance(css, str) or not css.lower().endswith(".css"):
+            raise ApiError(400, "Only .css files can be used")
+        path = content_path(root, template_target(template_path, css))
+        if not path.is_file():
+            raise ApiError(404, "File not found")
+        text = path.read_bytes().decode("utf-8-sig")
+    except (ApiError, UnicodeDecodeError) as err:
+        reason = err.message if isinstance(err, ApiError) else "The file is not UTF-8"
+        return "", set(), [f'Cannot read template CSS "{css}": {reason}. It must be a UTF-8 .css file inside the open folder.']
+    return template_style.read_css(text, css)
 
 
 def render_body(meta, body, env, root, rel):
     """按 frontmatter 选的模板渲染正文，返回 (HTML, 给前端的模板信息, 问题)。前端只看模板信息，不需要知道是哪个模板。"""
-    template = meta.get("template") or meta.get("extends")  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果
-    from_file = {}
-    problems = []
-    if is_template_file(template):
-        from_file, problem = read_template_file(root, rel, template)
-        if problem:
-            problems.append(problem)
-    elif template != "report":
-        if template:
-            problems.append(f'Unknown template "{template}". Use "report", or the path of a template file like ./my-template.md')
+    base, settings, template_path, problems = find_template(meta, root, rel)
+    if base is None:
         return MD.render(body, env), NO_TEMPLATE, problems
-    values, style_problems = report_style.read_style(from_file.get("style"), meta.get("style"))
-    problems += style_problems
-    text = report_style.apply_text(academic.text_for(meta.get("lang") or from_file.get("lang")), values)
+    custom_css, css_variables, css_problems = read_template_css(root, template_path, settings.get("css"))
+    values, variables, style_problems = template_style.read_style([settings.get("style"), meta.get("style")], base, css_variables)
+    problems += css_problems + style_problems
+    generated_css = template_style.build_css(values, variables, base) + "\n" + custom_css
+    if base == "none":
+        info = {**NO_TEMPLATE, "doc_class": template_style.DOC_CLASSES[base], "template_css": generated_css}
+        return MD.render(body, env), info, problems
+    text = template_style.apply_text(academic.text_for(meta.get("lang") or settings.get("lang")), values)
     env["report_text"] = text
     render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
     html = academic.front_matter_html(meta, text, render_inline) + MD_REPORT.render(academic.prepare_source(body), env)
     info = {
-        "doc_class": "academic",
+        "doc_class": template_style.DOC_CLASSES[base],
         "show_head": False,  # 题目、作者和摘要已经在正文的开头
-        "template_css": REPORT_CSS.read_text(encoding="utf-8") + "\n" + report_style.build_css(values),
+        "template_css": REPORT_CSS.read_text(encoding="utf-8") + "\n" + generated_css,
         "toc_title": text["toc"],
     }
     return html, info, problems

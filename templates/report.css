@@ -1,4 +1,4 @@
-/* 学术报告模板的默认样式。可以调的项在 report_style.py，字号按国内毕业论文和 GB/T 7713 的常见要求：
+/* 学术报告模板的默认样式。可以调的项在 template_style.py，字号按国内毕业论文和 GB/T 7713 的常见要求：
    题目二号，一级标题三号，二级标题四号，三级标题和正文小四，图题、表题和表格五号 */
 @font-face { font-family: "Report Heading Latin"; src: local("Times New Roman Bold"), local("TimesNewRomanPS-BoldMT"); unicode-range: U+0-2FF, U+2000-206F; }
 .doc.academic {
