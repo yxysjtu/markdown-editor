@@ -483,6 +483,8 @@ def make_markdown():
 
 MD = make_markdown()
 MD_REPORT = academic.enable(make_markdown())  # 用学术报告模板时用这个
+REPORT_CSS = APP_DIR / "templates" / "report.css"
+NO_TEMPLATE = {"doc_class": "", "show_head": True, "template_css": "", "toc_title": "Table of Contents"}
 
 
 def parse_tags(value):
@@ -540,6 +542,34 @@ def read_template_file(root, rel, template):
     return meta, ""
 
 
+def render_body(meta, body, env, root, rel):
+    """按 frontmatter 选的模板渲染正文，返回 (HTML, 给前端的模板信息, 问题)。前端只看模板信息，不需要知道是哪个模板。"""
+    template = meta.get("template") or meta.get("extends")  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果
+    from_file = {}
+    problems = []
+    if is_template_file(template):
+        from_file, problem = read_template_file(root, rel, template)
+        if problem:
+            problems.append(problem)
+    elif template != "report":
+        if template:
+            problems.append(f'Unknown template "{template}". Use "report", or the path of a template file like ./my-template.md')
+        return MD.render(body, env), NO_TEMPLATE, problems
+    values, style_problems = report_style.read_style(from_file.get("style"), meta.get("style"))
+    problems += style_problems
+    text = report_style.apply_text(academic.text_for(meta.get("lang") or from_file.get("lang")), values)
+    env["report_text"] = text
+    render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
+    html = academic.front_matter_html(meta, text, render_inline) + MD_REPORT.render(academic.prepare_source(body), env)
+    info = {
+        "doc_class": "academic",
+        "show_head": False,  # 题目、作者和摘要已经在正文的开头
+        "template_css": REPORT_CSS.read_text(encoding="utf-8") + "\n" + report_style.build_css(values),
+        "toc_title": text["toc"],
+    }
+    return html, info, problems
+
+
 def api_render(data):
     root = data.get("root")
     rel = data.get("path")
@@ -547,29 +577,9 @@ def api_render(data):
     source = data.get("content") or ""
     meta, body, warning = split_frontmatter(source)
     env = {"line_offset": source.count("\n") - body.count("\n")}
-    problems = [warning] if warning else []
-    template = meta.get("template") or meta.get("extends")  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果
-    from_file = {}
-    if is_template_file(template):
-        from_file, problem = read_template_file(root, rel, template)
-        if problem:
-            problems.append(problem)
-    is_report = template == "report" or is_template_file(template)
-    report_css = ""
-    toc_title = "Table of Contents"
-    if is_report:
-        values, style_problems = report_style.read_style(from_file.get("style"), meta.get("style"))
-        problems += style_problems
-        report_css = report_style.build_css(values)
-        text = report_style.apply_text(academic.text_for(meta.get("lang") or from_file.get("lang")), values)
-        toc_title = text["toc"]
-        env["report_text"] = text
-        render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
-        html = academic.front_matter_html(meta, text, render_inline) + MD_REPORT.render(academic.prepare_source(body), env)
-    else:
-        html = MD.render(body, env)
-        if template:
-            problems.append(f'Unknown template "{template}". Use "report", or the path of a template file like ./my-template.md')
+    html, template_info, problems = render_body(meta, body, env, root, rel)
+    if warning:
+        problems.insert(0, warning)
     date = meta.get("date")
     return {
         "title": str(meta.get("title") or ""),
@@ -577,9 +587,7 @@ def api_render(data):
         "tags": parse_tags(meta.get("tags")),
         "html": rewrite_images(html, root, rel),
         "warning": "\n".join(problems),
-        "template": "report" if is_report else "",
-        "report_style": report_css,
-        "toc_title": toc_title,
+        **template_info,
     }
 
 

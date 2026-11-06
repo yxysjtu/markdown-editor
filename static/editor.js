@@ -1117,9 +1117,8 @@
         if (forPdf) { // PDF 的书签来自标题，只保留三级
           body.querySelectorAll('h4, h5, h6').forEach(function (heading) { heading.setAttribute('role', 'paragraph'); });
         }
-        var isReport = data.template === 'report'; // 学术报告的题目和作者已经在正文开头
         var head = '';
-        if (!isReport && (data.title || data.date || data.tags.length)) {
+        if (data.show_head && (data.title || data.date || data.tags.length)) {
           head = '<header class="doc-head">' + (data.title ? '<h1>' + escapeHtml(data.title) + '</h1>' : '') +
             '<div class="doc-meta">' + (data.date ? '<time>' + escapeHtml(data.date) + '</time>' : '') +
             '<div class="tags">' + data.tags.map(function (tag) { return '<span class="tag">' + escapeHtml(tag) + '</span>'; }).join('') + '</div>' +
@@ -1129,8 +1128,8 @@
           '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
           '<title>' + escapeHtml(title) + '</title>\n' +
           (body.querySelector('.katex') ? '<link rel="stylesheet" href="' + KATEX_CSS + '">\n' : '') +
-          '<style>\n' + results[1] + '\n' + results[2] + '\n' + data.report_style + '\n</style>\n</head>\n' +
-          '<body class="exported' + (toc ? ' has-toc' : '') + '">\n' + toc + '<article class="doc' + (isReport ? ' academic' : '') + '">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
+          '<style>\n' + results[1] + '\n' + results[2] + '\n' + data.template_css + '\n</style>\n</head>\n' +
+          '<body class="exported' + (toc ? ' has-toc' : '') + '">\n' + toc + '<article class="doc' + (data.doc_class ? ' ' + data.doc_class : '') + '">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
         return { html: html, failedImages: failedImages };
       });
     });
@@ -1397,10 +1396,10 @@
       if (seq !== previewSeq) return;
       previewError.hidden = !data.warning;
       previewError.textContent = data.warning;
-      var isReport = data.template === 'report'; // 学术报告的题目、作者和摘要在正文的开头
-      document.getElementById('preview-doc').classList.toggle('academic', isReport);
-      document.getElementById('report-style').textContent = data.report_style;
-      document.getElementById('preview-head').hidden = isReport || !(data.title || data.date || data.tags.length);
+      document.getElementById('preview-doc').className = 'doc' + (data.doc_class ? ' ' + data.doc_class : '');
+      var templateStyle = document.getElementById('template-style');
+      if (templateStyle.textContent !== data.template_css) templateStyle.textContent = data.template_css; // 没变时不重算样式，打字时才不卡
+      document.getElementById('preview-head').hidden = !data.show_head || !(data.title || data.date || data.tags.length);
       document.getElementById('preview-title').hidden = !data.title;
       document.getElementById('preview-title').textContent = data.title;
       document.getElementById('preview-date').textContent = data.date;

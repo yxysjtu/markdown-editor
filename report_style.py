@@ -1,7 +1,7 @@
 """学术报告的自定义样式：把 frontmatter 里的 style 选项检查一遍，再生成样式文字。
 
 只有这里列出的选项可以用，值也都要通过检查。Markdown 文件可能来自别人，
-不能让 style 里的内容变成任意 CSS。默认样式在 static/document.css，这里生成的规则放在它后面，只覆盖写了的项。
+不能让 style 里的内容变成任意 CSS。默认样式在 templates/report.css，这里生成的规则放在它后面，只覆盖写了的项。
 """
 import re
 
