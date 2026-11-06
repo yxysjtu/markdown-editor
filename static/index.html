@@ -47,12 +47,21 @@
   <button type="button" id="open-preferences" title="Settings" aria-label="Settings">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0-1.2-2.9h-.2a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
   </button>
+  <button type="button" id="open-find" title="Find and Replace (Ctrl+H)" aria-label="Find and Replace" aria-controls="find-panel" aria-expanded="false" disabled hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>
+  </button>
   <span id="file-path" class="file-path"></span>
   <span id="save-status" class="save-status" role="status"></span>
   <div class="mode-switch" role="group" aria-label="View mode">
-    <button type="button" data-mode="edit">Edit</button>
-    <button type="button" data-mode="split">Split</button>
-    <button type="button" data-mode="preview">Preview</button>
+    <button type="button" data-mode="edit" title="Edit" aria-label="Edit">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1-4.5L16.5 4a2.1 2.1 0 0 1 3 0l.5.5a2.1 2.1 0 0 1 0 3L8.5 19 4 20zM14.5 6l3.5 3.5"/></svg>
+    </button>
+    <button type="button" data-mode="split" title="Split" aria-label="Split">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M12 5v14"/></svg>
+    </button>
+    <button type="button" data-mode="preview" title="Preview" aria-label="Preview">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
   </div>
 </header>
 
@@ -88,6 +97,25 @@
   </form>
 </dialog>
 
+<dialog id="new-item-dialog" class="preferences" aria-labelledby="new-item-title">
+  <form id="new-item-form" method="dialog">
+    <h2 id="new-item-title"></h2>
+    <label class="pref-row" for="new-item-folder">
+      <span>Folder</span>
+      <input id="new-item-folder" class="pref-text" type="text" placeholder="The open folder (root)" spellcheck="false" autocomplete="off">
+    </label>
+    <label class="pref-row" for="new-item-name">
+      <span id="new-item-name-label"></span>
+      <input id="new-item-name" class="pref-text" type="text" spellcheck="false" autocomplete="off">
+    </label>
+    <p id="new-item-error" class="pref-error" hidden></p>
+    <div class="pref-actions">
+      <button type="button" id="new-item-cancel">Cancel</button>
+      <button type="submit" id="new-item-create" class="pref-primary">Create</button>
+    </div>
+  </form>
+</dialog>
+
 <main id="welcome" class="welcome" hidden>
   <h1>Markdown Editor</h1>
   <p>Choose a folder to start editing its Markdown files.</p>
@@ -110,7 +138,44 @@
     <button type="button" id="expand-tree" class="tree-collapse" title="Expand sidebar" aria-label="Expand sidebar" aria-controls="file-tree">›</button>
   </div>
   <nav id="file-tree" class="file-tree" aria-label="Files"></nav>
-  <div id="editor-pane" class="editor-pane"></div>
+  <div id="editor-pane" class="editor-pane">
+    <div id="find-panel" class="find-panel" role="search" aria-label="Find and Replace" hidden>
+      <button type="button" id="find-toggle-replace" class="find-button find-chevron" title="Toggle Replace" aria-label="Toggle Replace" aria-controls="replace-row" aria-expanded="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="find-rows">
+        <div class="find-row">
+          <div class="find-field">
+            <input id="find-input" type="text" placeholder="Find" aria-label="Find" spellcheck="false" autocomplete="off">
+            <button type="button" id="find-case" class="find-option" title="Match Case" aria-label="Match Case" aria-pressed="false">Aa</button>
+            <button type="button" id="find-word" class="find-option" title="Match Whole Word" aria-label="Match Whole Word" aria-pressed="false"><u>ab</u></button>
+            <button type="button" id="find-regex" class="find-option" title="Use Regular Expression" aria-label="Use Regular Expression" aria-pressed="false">.*</button>
+          </div>
+          <span id="find-count" class="find-count" role="status"></span>
+          <button type="button" id="find-prev" class="find-button" title="Previous Match (Shift+Enter)" aria-label="Previous Match">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4M6 10l6-6 6 6"/></svg>
+          </button>
+          <button type="button" id="find-next" class="find-button" title="Next Match (Enter)" aria-label="Next Match">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M6 14l6 6 6-6"/></svg>
+          </button>
+          <button type="button" id="find-close" class="find-button" title="Close (Esc)" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div class="find-row" id="replace-row">
+          <div class="find-field">
+            <input id="replace-input" type="text" placeholder="Replace" aria-label="Replace" spellcheck="false" autocomplete="off">
+          </div>
+          <button type="button" id="replace-one" class="find-button" title="Replace (Enter)" aria-label="Replace">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="9" height="7" rx="1"/><rect x="12" y="14" width="9" height="7" rx="1"/><path d="M15 6.5h2a2 2 0 0 1 2 2V11M16.5 8.5L19 11l2.5-2.5"/></svg>
+          </button>
+          <button type="button" id="replace-all" class="find-button" title="Replace All" aria-label="Replace All">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="9" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="13" y="14" width="8" height="7" rx="1"/><path d="M15 6.5h2a2 2 0 0 1 2 2V11M16.5 8.5L19 11l2.5-2.5"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="preview-wrap">
     <div id="preview-pane" class="preview-pane">
       <div id="preview-error" class="preview-error" hidden></div>

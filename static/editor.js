@@ -39,9 +39,17 @@
     return '/api/file?root=' + encodeURIComponent(root) + '&path=' + encodeURIComponent(path);
   }
 
-  function showStatus(text, isError) {
+  var statusTimer = null;
+
+  function keepStatus(text, isError) { // 一直显示到下一条消息：进行中、未保存和错误
+    clearTimeout(statusTimer);
     status.textContent = text;
     status.classList.toggle('error', !!isError);
+  }
+
+  function showStatus(text, isError) { // 操作结果几秒后自动消失；错误不消失，免得没看到
+    keepStatus(text, isError);
+    if (!isError) statusTimer = setTimeout(function () { status.textContent = ''; }, 3000);
   }
 
   function isDirty() {
@@ -758,6 +766,8 @@
     updateDeleteButton();
     exportToggle.disabled = true;
     closeExportMenu();
+    openFindButton.disabled = true;
+    closeFind();
     document.body.classList.add('no-file');
     document.getElementById('toc').hidden = true;
     previewBody.textContent = '';
@@ -963,7 +973,7 @@
       showStatus('Exported ' + stem + '.md');
       return;
     }
-    showStatus('Preparing export…');
+    keepStatus('Preparing export…');
     buildExportHtml(path, content).then(function (result) {
       var note = result.failedImages ? ' (' + result.failedImages + ' image(s) could not be embedded)' : '';
       if (format === 'html') {
@@ -1011,7 +1021,7 @@
     var doc = cm.getDoc();
     doc.replaceSelection('');
     var place = doc.setBookmark(doc.getCursor(), { insertLeft: true }); // 上传期间继续打字，图片也插在粘贴的位置
-    showStatus('Saving image…');
+    keepStatus('Saving image…');
     return readBase64(file).then(function (data) {
       return request('/api/image', { root: root, path: path, type: file.type, data: data });
     }).then(function (saved) {
@@ -1048,6 +1058,7 @@
     document.body.classList.remove('no-file');
     cm.setOption('readOnly', false);
     exportToggle.disabled = false;
+    openFindButton.disabled = false;
     cm.swapDoc(CodeMirror.Doc(data.content, 'markdown-editor')); // 换一个文档，撤销不会跨文件
     filePath.textContent = data.path;
     document.title = data.path.split('/').pop() + ' · Markdown Editor';
@@ -1088,13 +1099,14 @@
   function writeFile(force) {
     var content = cm.getValue();
     var path = current.path;
-    showStatus('Saving…');
+    keepStatus('Saving…');
     return request('/api/save', { root: root, path: path, content: content, mtime: current.mtime, force: !!force })
       .then(function (data) {
         if (!current || current.path !== path) return true;
         current.mtime = data.mtime;
         saved = content;
-        showStatus(isDirty() ? 'Unsaved changes' : 'Saved');
+        if (isDirty()) keepStatus('Unsaved changes');
+        else showStatus('Saved');
         return true;
       })
       .catch(function (err) {
@@ -1314,7 +1326,7 @@
     previewTimer = setTimeout(renderPreview, PREVIEW_DELAY);
     clearTimeout(saveTimer);
     if (isDirty()) {
-      showStatus('Unsaved changes');
+      keepStatus('Unsaved changes');
       saveTimer = setTimeout(saveNow, AUTOSAVE_DELAY);
     } else {
       showStatus('Saved');
@@ -1384,31 +1396,374 @@
   });
   setTreeCollapsed(localStorage.getItem('editor-tree-collapsed') === '1');
 
+  // ---------- 查找替换 ----------
+  var findPanel = document.getElementById('find-panel');
+  var findInput = document.getElementById('find-input');
+  var replaceInput = document.getElementById('replace-input');
+  var findCount = document.getElementById('find-count');
+  var replaceRow = document.getElementById('replace-row');
+  var findToggleReplace = document.getElementById('find-toggle-replace');
+  var findOptions = {
+    matchCase: document.getElementById('find-case'),
+    wholeWord: document.getElementById('find-word'),
+    regex: document.getElementById('find-regex')
+  };
+  var findMatches = []; // [{from, to, groups}]，from 和 to 是在整篇文字里的位置
+  var findMarks = [];
+  var currentFindMark = null;
+
+  function optionOn(button) {
+    return button.getAttribute('aria-pressed') === 'true';
+  }
+
+  function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function buildFindRegExp() {
+    var source = optionOn(findOptions.regex) ? findInput.value : escapeRegExp(findInput.value);
+    if (optionOn(findOptions.wholeWord)) {
+      source = '(?<![\\w\\u0080-\\uFFFF])(?:' + source + ')(?![\\w\\u0080-\\uFFFF])'; // 中文也算单词字符
+    }
+    return new RegExp(source, optionOn(findOptions.matchCase) ? 'gm' : 'gim');
+  }
+
+  function clearFindMarks() {
+    findMarks.forEach(function (mark) { mark.clear(); });
+    findMarks = [];
+    if (currentFindMark) currentFindMark.clear();
+    currentFindMark = null;
+  }
+
+  function selectionIndexes() {
+    return { from: cm.indexFromPos(cm.getCursor('from')), to: cm.indexFromPos(cm.getCursor('to')) };
+  }
+
+  function selectedMatchIndex() {
+    var selection = selectionIndexes();
+    for (var i = 0; i < findMatches.length; i++) {
+      if (findMatches[i].from === selection.from && findMatches[i].to === selection.to) return i;
+    }
+    return -1;
+  }
+
+  function updateFindCurrent() { // 根据选区更新“第几个”和当前匹配的高亮
+    if (currentFindMark) currentFindMark.clear();
+    currentFindMark = null;
+    var index = selectedMatchIndex();
+    if (index !== -1) {
+      currentFindMark = cm.markText(cm.posFromIndex(findMatches[index].from), cm.posFromIndex(findMatches[index].to), { className: 'cm-find-current' });
+    }
+    if (!findMatches.length) {
+      findCount.textContent = findInput.value ? 'No results' : '';
+    } else {
+      findCount.textContent = index !== -1 ? (index + 1) + ' of ' + findMatches.length : findMatches.length + (findMatches.length === 1 ? ' result' : ' results');
+    }
+  }
+
+  function refreshFind() { // 重新查找并高亮，不移动选区
+    var pattern = null;
+    var invalid = false;
+    if (findInput.value) {
+      try {
+        pattern = buildFindRegExp();
+      } catch (err) {
+        invalid = true;
+      }
+    }
+    findMatches = [];
+    if (pattern) {
+      var text = cm.getValue();
+      var match;
+      while ((match = pattern.exec(text))) {
+        if (match[0]) findMatches.push({ from: match.index, to: match.index + match[0].length, groups: match });
+        else pattern.lastIndex++; // 跳过空匹配（比如 ^ 或 x*），否则会死循环
+      }
+    }
+    cm.operation(function () {
+      clearFindMarks();
+      findMarks = findMatches.map(function (item) {
+        return cm.markText(cm.posFromIndex(item.from), cm.posFromIndex(item.to), { className: 'cm-find-match' });
+      });
+      updateFindCurrent();
+    });
+    findInput.parentElement.classList.toggle('invalid', invalid);
+    findCount.classList.toggle('error', invalid);
+    if (invalid) findCount.textContent = 'Invalid regex';
+    var none = !findMatches.length;
+    ['find-prev', 'find-next', 'replace-one', 'replace-all'].forEach(function (id) {
+      document.getElementById(id).disabled = none;
+    });
+  }
+
+  function selectFindMatch(item) {
+    var from = cm.posFromIndex(item.from);
+    var to = cm.posFromIndex(item.to);
+    cm.setSelection(from, to, { scroll: false });
+    cm.scrollIntoView({ from: from, to: to }, 90); // 留出空间，不要被小窗挡住
+  }
+
+  function goToMatch(forward) {
+    if (!findMatches.length) return;
+    var selection = selectionIndexes();
+    var target = null;
+    if (forward) {
+      target = findMatches.find(function (item) { return item.from >= selection.to; }) || findMatches[0];
+    } else {
+      for (var i = findMatches.length - 1; i >= 0 && !target; i--) {
+        if (findMatches[i].to <= selection.from) target = findMatches[i];
+      }
+      target = target || findMatches[findMatches.length - 1];
+    }
+    selectFindMatch(target);
+  }
+
+  function revealFirstMatch() { // 输入查找内容时，跳到光标之后最近的匹配
+    var from = selectionIndexes().from;
+    var target = findMatches.find(function (item) { return item.from >= from; }) || findMatches[0];
+    if (target) selectFindMatch(target);
+  }
+
+  function replacementFor(item) {
+    var replacement = replaceInput.value;
+    if (!optionOn(findOptions.regex)) return replacement; // 普通查找时 $ 和 \ 就是普通字符
+    return replacement.replace(/\$(\$|&|\d{1,2}|<[^>]*>)|\\([nt\\])/g, function (whole, ref, escaped) {
+      if (escaped) return { n: '\n', t: '\t', '\\': '\\' }[escaped];
+      if (ref === '$') return '$';
+      if (ref === '&') return item.groups[0];
+      if (ref[0] === '<') {
+        var named = item.groups.groups;
+        return named && ref.slice(1, -1) in named ? named[ref.slice(1, -1)] || '' : whole;
+      }
+      return +ref > 0 && +ref < item.groups.length ? item.groups[+ref] || '' : whole;
+    });
+  }
+
+  function canEditDocument() {
+    return !!current && !cm.getOption('readOnly');
+  }
+
+  function replaceCurrent() {
+    if (!canEditDocument() || !findMatches.length) return;
+    var index = selectedMatchIndex();
+    if (index === -1) { // 还没选中匹配时，先跳过去看一眼，再按一次才替换
+      goToMatch(true);
+      return;
+    }
+    var item = findMatches[index];
+    var text = replacementFor(item);
+    cm.replaceRange(text, cm.posFromIndex(item.from), cm.posFromIndex(item.to), 'replace');
+    cm.setCursor(cm.posFromIndex(item.from + text.length)); // 替换后的文字不再参与这次查找
+    goToMatch(true);
+  }
+
+  function replaceAll() {
+    if (!canEditDocument() || !findMatches.length) return;
+    var items = findMatches.slice();
+    cm.operation(function () { // 放在一次操作里，撤销时一步还原
+      for (var i = items.length - 1; i >= 0; i--) { // 从后往前，前面的位置不会变
+        cm.replaceRange(replacementFor(items[i]), cm.posFromIndex(items[i].from), cm.posFromIndex(items[i].to), 'replace');
+      }
+    });
+    findCount.textContent = 'Replaced ' + items.length;
+    replaceInput.focus(); // 按钮可能刚变成不可用，焦点不能丢，否则 Esc 关不掉小窗
+  }
+
+  function reserveFindSpace() { // 小窗开着时内容往下让，否则开头几行被挡住，也滚不出来
+    var open = !findPanel.hidden;
+    var lines = cm.getWrapperElement();
+    lines.classList.toggle('find-open', open);
+    if (open) lines.style.setProperty('--find-space', (findPanel.offsetHeight + 12) + 'px');
+    cm.refresh();
+  }
+
+  function setReplaceVisible(visible) {
+    replaceRow.hidden = !visible;
+    findToggleReplace.setAttribute('aria-expanded', String(visible));
+    reserveFindSpace();
+  }
+
+  function openFind(showReplace) {
+    if (!current) return;
+    if (document.body.classList.contains('mode-preview')) {
+      document.querySelector('.mode-switch [data-mode="split"]').click(); // 预览模式看不到编辑区
+    }
+    var wasHidden = findPanel.hidden;
+    findPanel.hidden = false;
+    if (showReplace || wasHidden) setReplaceVisible(!!showReplace);
+    openFindButton.setAttribute('aria-expanded', 'true');
+    var selected = cm.getSelection();
+    if (selected && selected.indexOf('\n') === -1) {
+      findInput.value = optionOn(findOptions.regex) ? escapeRegExp(selected) : selected;
+    }
+    refreshFind();
+    findInput.focus();
+    findInput.select();
+  }
+
+  function closeFind() {
+    findPanel.hidden = true;
+    openFindButton.setAttribute('aria-expanded', 'false');
+    findMatches = [];
+    clearFindMarks();
+    reserveFindSpace();
+  }
+
+  var openFindButton = document.getElementById('open-find');
+  openFindButton.hidden = false;
+  openFindButton.addEventListener('click', function () {
+    if (findPanel.hidden || document.body.classList.contains('mode-preview')) {
+      openFind(true);
+    } else {
+      closeFind();
+      cm.focus();
+    }
+  });
+  document.getElementById('find-close').addEventListener('click', function () {
+    closeFind();
+    cm.focus();
+  });
+  findToggleReplace.addEventListener('click', function () {
+    setReplaceVisible(replaceRow.hidden);
+  });
+  document.getElementById('find-prev').addEventListener('click', function () { goToMatch(false); });
+  document.getElementById('find-next').addEventListener('click', function () { goToMatch(true); });
+  document.getElementById('replace-one').addEventListener('click', replaceCurrent);
+  document.getElementById('replace-all').addEventListener('click', replaceAll);
+  Object.keys(findOptions).forEach(function (name) {
+    findOptions[name].addEventListener('click', function () {
+      findOptions[name].setAttribute('aria-pressed', String(!optionOn(findOptions[name])));
+      refreshFind();
+      revealFirstMatch();
+    });
+  });
+  findInput.addEventListener('input', function () {
+    refreshFind();
+    revealFirstMatch();
+  });
+  findInput.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      goToMatch(!event.shiftKey);
+    }
+  });
+  replaceInput.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      replaceCurrent();
+    }
+  });
+  // 文字变了（打字、撤销）或者换了文件，都要重新查找
+  ['changes', 'swapDoc'].forEach(function (name) {
+    cm.on(name, function () {
+      if (!findPanel.hidden) refreshFind();
+    });
+  });
+  cm.on('cursorActivity', function () {
+    if (!findPanel.hidden) cm.operation(updateFindCurrent);
+  });
+  document.addEventListener('keydown', function (event) {
+    if (document.querySelector('dialog[open]')) return;
+    if (event.key === 'Escape' && !findPanel.hidden && event.target.closest('#editor-pane')) {
+      closeFind();
+      cm.focus();
+      return;
+    }
+    if (!event.ctrlKey && !event.metaKey || event.altKey || event.shiftKey || !current) return;
+    if (document.body.classList.contains('mode-preview')) return; // 预览时留给浏览器自带的查找，不跳视图
+    var key = event.key.toLowerCase();
+    if (key === 'f' || (key === 'h' && event.ctrlKey)) {
+      event.preventDefault();
+      openFind(key === 'h');
+    }
+  });
+
   var newFileButton = document.getElementById('new-file');
   newFileButton.hidden = false;
-  newFileButton.addEventListener('click', function () {
-    var path = window.prompt('File path, relative to the open folder (missing folders are created):', joinPath(newItemParent(), 'new-file.md'));
-    if (!path) return;
-    saveNow().then(function (ok) {
-      if (!ok) return;
-      return request('/api/new', { root: root, path: path }).then(function (data) {
-        return loadTree().then(function () { return openFile(data.path); });
-      });
-    }).catch(function (err) { showStatus(err.message, true); });
+  // 新建文件和新建文件夹共用一个小窗
+  var newItemDialog = document.getElementById('new-item-dialog');
+  var newItemFolder = document.getElementById('new-item-folder');
+  var newItemName = document.getElementById('new-item-name');
+  var newItemError = document.getElementById('new-item-error');
+  var newItemCreate = document.getElementById('new-item-create');
+  var newItemKind = null;
+
+  var NEW_ITEM_KINDS = {
+    file: {
+      title: 'New File',
+      nameLabel: 'File name',
+      defaultName: 'untitled.md',
+      create: function (path) {
+        return saveNow().then(function (ok) {
+          if (!ok) throw new Error('Could not save the current file.');
+          return request('/api/new', { root: root, path: path });
+        }).then(function (data) {
+          newItemDialog.close();
+          return loadTree().then(function () { return openFile(data.path); });
+        });
+      }
+    },
+    folder: {
+      title: 'New Folder',
+      nameLabel: 'Folder name',
+      defaultName: 'untitled',
+      create: function (path) {
+        return request('/api/new-folder', { root: root, path: path }).then(function (data) {
+          newItemDialog.close();
+          return loadTree().then(function () {
+            openFolders(data.path);
+            showStatus('Created ' + data.path);
+          });
+        });
+      }
+    }
+  };
+
+  function showNewItemError(message) {
+    newItemError.textContent = message;
+    newItemError.hidden = false;
+  }
+
+  function openNewItemDialog(kind) {
+    var settings = NEW_ITEM_KINDS[kind];
+    newItemKind = kind;
+    document.getElementById('new-item-title').textContent = settings.title;
+    document.getElementById('new-item-name-label').textContent = settings.nameLabel;
+    newItemFolder.value = newItemParent();
+    newItemName.value = settings.defaultName;
+    newItemError.hidden = true;
+    newItemDialog.showModal();
+    newItemName.focus();
+    var suffix = newItemName.value.lastIndexOf('.');
+    newItemName.setSelectionRange(0, suffix === -1 ? newItemName.value.length : suffix); // 后缀不用改，不选中
+  }
+
+  newFileButton.addEventListener('click', function () { openNewItemDialog('file'); });
+  document.getElementById('new-item-cancel').addEventListener('click', function () {
+    newItemDialog.close();
+  });
+  document.getElementById('new-item-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    if (newItemCreate.disabled) return; // 上一次还没创建完
+    var settings = NEW_ITEM_KINDS[newItemKind];
+    var name = newItemName.value.trim().replace(/\\/g, '/');
+    if (!name) {
+      showNewItemError('Enter a ' + settings.nameLabel.toLowerCase() + '.');
+      newItemName.focus();
+      return;
+    }
+    var folder = newItemFolder.value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    newItemCreate.disabled = true;
+    settings.create(joinPath(folder, name)).catch(function (err) {
+      showNewItemError(err.message);
+    }).then(function () {
+      newItemCreate.disabled = false;
+    });
   });
 
   var newFolderButton = document.getElementById('new-folder');
   newFolderButton.hidden = false;
-  newFolderButton.addEventListener('click', function () {
-    var path = window.prompt('Folder path, relative to the open folder:', joinPath(newItemParent(), 'new-folder'));
-    if (!path) return;
-    request('/api/new-folder', { root: root, path: path }).then(function (data) {
-      return loadTree().then(function () {
-        openFolders(data.path);
-        showStatus('Created ' + data.path);
-      });
-    }).catch(function (err) { showStatus(err.message, true); });
-  });
+  newFolderButton.addEventListener('click', function () { openNewItemDialog('folder'); });
 
   // 切回这个窗口时，看看文件有没有被别的程序（比如 git 或 VS Code）改过
   window.addEventListener('focus', function () {

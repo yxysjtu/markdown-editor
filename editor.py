@@ -277,24 +277,40 @@ def api_save(data):
     return {"mtime": mtime_of(path)}
 
 
+def unused_name(path, stem, suffix):
+    """重名时在后面加编号：a.md 和 a (1).md 都有了，就用 a (2).md。"""
+    if not path.exists():
+        return path.name
+    base = re.sub(r" \(\d+\)$", "", stem)  # 输入 a (1) 且已存在时，接着 a 的编号往下排
+    pattern = re.compile(re.escape(base) + r"(?: \((\d+)\))?" + re.escape(suffix), re.I)  # Windows 不分大小写
+    matches = (pattern.fullmatch(child.name) for child in path.parent.iterdir())
+    largest = max((int(match.group(1) or 0) for match in matches if match), default=0)
+    return f"{base} ({largest + 1}){suffix}"
+
+
+def with_name(rel, name):
+    return "/".join(rel.split("/")[:-1] + [name])
+
+
 def api_new(data):
+    root = data.get("root")
     rel = (data.get("path") or "").strip().strip("/")
     if not rel.lower().endswith(MARKDOWN_SUFFIXES):
         rel += ".md"
-    path = markdown_path(data.get("root"), rel)
-    if path.exists():
-        raise ApiError(409, "That file already exists")
+    path = markdown_path(root, rel)
+    rel = with_name(rel, unused_name(path, path.stem, path.suffix))
+    path = markdown_path(root, rel)
     path.parent.mkdir(parents=True, exist_ok=True)
     write_file(path, f"# {path.stem}\n\n")
     return {"path": rel}
 
 
 def api_new_folder(data):
+    root = data.get("root")
     rel = (data.get("path") or "").strip().strip("/")
-    path = content_path(data.get("root"), rel)
-    if path.exists():
-        raise ApiError(409, "That folder already exists")
-    path.mkdir(parents=True)
+    path = content_path(root, rel)
+    rel = with_name(rel, unused_name(path, path.name, ""))  # 文件夹名里的点不是后缀，比如 v1.2
+    content_path(root, rel).mkdir(parents=True)
     return {"path": rel}
 
 

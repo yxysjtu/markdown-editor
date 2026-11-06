@@ -11,10 +11,11 @@ button { font: inherit; cursor: pointer; }
 .file-path { flex: 1; min-width: 0; margin-left: 4px; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .save-status { flex: none; color: var(--muted); }
 .save-status.error { color: #c0392b; font-weight: 600; }
-.mode-switch { flex: none; display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.mode-switch button { height: 28px; padding: 0 12px; border: 0; background: var(--bg); color: var(--muted); }
-.mode-switch button:hover { background: var(--surface); }
-body.mode-edit [data-mode="edit"], body.mode-split [data-mode="split"], body.mode-preview [data-mode="preview"] { background: var(--text); color: #fff; }
+.mode-switch { flex: none; display: flex; gap: 4px; }
+.mode-switch button { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1.5px solid transparent; border-radius: var(--radius); background: none; color: var(--muted); }
+.mode-switch button:hover { background: var(--surface); color: var(--text); }
+.mode-switch svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+body.mode-edit [data-mode="edit"], body.mode-split [data-mode="split"], body.mode-preview [data-mode="preview"] { background: var(--surface); border-color: var(--text); color: var(--text); }
 
 /* 欢迎页 */
 .welcome { flex: 1; width: 100%; max-width: 620px; margin: 0 auto; padding: 72px 24px; overflow: auto; }
@@ -41,7 +42,7 @@ body.tree-collapsed .file-tree { display: none; }
 /* 侧栏收起后留下的窄边，展开按钮和收起按钮在同一高度 */
 .tree-rail { display: none; flex: none; padding: 6px; border-right: 1px solid var(--border); background: var(--surface); }
 body.tree-collapsed .tree-rail { display: flex; align-items: flex-start; }
-.editor-pane { flex: 1 1 0; min-width: 0; }
+.editor-pane { position: relative; flex: 1 1 0; min-width: 0; }
 .preview-wrap { position: relative; flex: 1 1 0; min-width: 0; display: flex; border-left: 1px solid var(--border); container-type: inline-size; }
 .preview-pane { flex: 1; min-width: 0; overflow: auto; padding: 28px 56px 64px 32px; } /* 右边留出目录缩略条的位置 */
 .preview-pane .doc { max-width: 760px; margin: 0 auto; }
@@ -134,12 +135,36 @@ body.no-file .doc { display: none; }
 .cm-s-default .cm-atom, .cm-s-default .cm-def, .cm-s-default .cm-number { color: #80868b; }
 
 /* 图标按钮 */
-.editor-bar > #open-folder, .editor-bar > #new-file, .editor-bar > #new-folder, .editor-bar > #delete-file, .editor-bar > #open-preferences { display: flex; align-items: center; justify-content: center; width: 30px; padding: 0; color: var(--muted); }
-.editor-bar > #open-folder:hover, .editor-bar > #new-file:hover, .editor-bar > #new-folder:hover, .editor-bar > #open-preferences:hover { color: var(--text); }
+.editor-bar > #open-folder, .editor-bar > #new-file, .editor-bar > #new-folder, .editor-bar > #delete-file, .editor-bar > #open-preferences, .editor-bar > #open-find { display: flex; align-items: center; justify-content: center; width: 30px; padding: 0; color: var(--muted); }
+.editor-bar > #open-folder:hover, .editor-bar > #new-file:hover, .editor-bar > #new-folder:hover, .editor-bar > #open-preferences:hover, .editor-bar > #open-find:hover:not(:disabled) { color: var(--text); }
+.editor-bar > #open-find:disabled { opacity: .4; cursor: default; }
 .editor-bar > #delete-file:hover:not(:disabled) { background: #fdf3f1; border-color: #e3b4ae; color: #c0392b; }
 .editor-bar > #delete-file:disabled { opacity: .4; cursor: default; }
 .editor-bar > button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
 .editor-bar > [hidden] { display: none !important; }
+/* 查找替换小窗 */
+.find-panel { position: absolute; top: 8px; right: 18px; z-index: 10; display: flex; align-items: flex-start; gap: 2px; width: 400px; max-width: calc(100% - 28px); min-width: 340px; padding: 5px 6px 5px 2px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0, 0, 0, .12); font-size: 13px; }
+.find-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.find-row { display: flex; align-items: center; gap: 2px; }
+.find-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; height: 26px; padding-right: 3px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.find-field:focus-within { border-color: var(--text); }
+.find-field input { flex: 1; min-width: 0; height: 100%; padding: 0 6px; border: 0; outline: 0; background: none; color: var(--text); font: inherit; }
+.find-field.invalid { border-color: #c0392b; }
+.find-option { flex: none; width: 22px; height: 20px; padding: 0; border: 1px solid transparent; border-radius: 3px; background: none; color: var(--muted); font-size: 12px; line-height: 1; }
+.find-option:hover { background: var(--surface-hover); color: var(--text); }
+.find-option[aria-pressed="true"] { background: #dbe7f6; border-color: var(--accent); color: var(--accent); }
+.find-count { flex: none; min-width: 62px; padding: 0 4px; color: var(--muted); font-size: 12px; text-align: center; white-space: nowrap; }
+.find-count.error { color: #c0392b; }
+.find-button { flex: none; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); }
+.find-button:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.find-button:disabled { opacity: .35; cursor: default; }
+.find-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.find-chevron { height: 26px; }
+.find-chevron[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.CodeMirror.find-open .CodeMirror-lines { padding-top: var(--find-space); }
+.cm-find-match { background: rgba(255, 213, 0, .4); }
+.cm-find-current { background: rgba(255, 140, 0, .55); }
+
 /* 导出菜单 */
 .export { position: relative; flex: none; }
 #export-toggle { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--muted); }
@@ -164,6 +189,7 @@ body.no-file .doc { display: none; }
 .pref-actions button { height: 32px; padding: 0 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 13px; }
 .pref-actions button:hover { background: var(--surface); }
 .pref-actions .pref-reset { margin-right: auto; color: var(--muted); }
+#new-item-form .pref-actions { justify-content: flex-end; }
 .pref-actions .pref-primary { border-color: var(--text); background: var(--text); color: #fff; }
 .pref-actions .pref-primary:hover { background: #000; }
 
