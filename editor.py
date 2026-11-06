@@ -450,7 +450,7 @@ def render_block(renderer, tokens, index, options, env):
 def class_span(state, silent):
     """[文字]{.date} 生成 <span class="date">。只认 class：style 这些属性会绕开模板 CSS 的检查，
     所以不用 mdit-py-plugins 的 attrs 插件，它的 allowed 参数管不到这种写法。"""
-    if state.src[state.pos] != "[":
+    if state.src[state.pos] != "[" or state.src.startswith("@", state.pos + 1):  # [@fig:a] 是引用，不能变成文字
         return False
     label_end = state.md.helpers.parseLinkLabel(state, state.pos)
     match = SPAN_CLASSES.match(state.src, label_end + 1) if label_end >= 0 else None
@@ -470,7 +470,8 @@ def class_span(state, silent):
 
 
 def enable_custom_markup(md):
-    """自定义模板可以写 ::: job 和 [文字]{.date}，生成带 class 的块和文字，由模板的 CSS 决定样式。"""
+    """模板可以写 ::: job 和 [文字]{.date}，生成带 class 的块和文字，由模板的 CSS 决定样式。
+    要在 numbered.enable 之后调用，这样 ::: figures 先被认成图组。"""
     md.use(container_plugin, name="block", render=render_block,
            validate=lambda params, *_: bool(BLOCK_CLASSES.fullmatch(params.strip())))
     md.inline.ruler.after("link", "class_span", class_span)  # 排在链接后面，真正的链接不受影响
@@ -478,7 +479,7 @@ def enable_custom_markup(md):
 
 
 MD = make_markdown()
-MD_NUMBERED = numbered.enable(make_markdown())  # 基于 numbered 的模板用这个
+MD_NUMBERED = enable_custom_markup(numbered.enable(make_markdown()))  # 基于 numbered 的模板用这个
 MD_CUSTOM = enable_custom_markup(make_markdown())  # 基于 none 的模板用这个
 
 
@@ -521,7 +522,7 @@ def render_body(meta, body, env, root, rel):
     text = template_style.apply_text(numbered.text_for(template["lang"]), template["values"])
     env["numbered_text"] = text
     info["toc_title"] = text["toc"]
-    render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
+    render_inline = lambda value: MD_CUSTOM.renderInline(value, {"line_offset": 0})
     html = numbered.front_matter_html(meta, text, render_inline) + MD_NUMBERED.render(numbered.prepare_source(body), env)
     return html, info, template["problems"]
 

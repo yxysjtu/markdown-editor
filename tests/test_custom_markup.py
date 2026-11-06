@@ -1,8 +1,8 @@
-"""基于 none 的模板可以写 ::: 块和 [文字]{.类名}。除了 class，什么属性都不能加。"""
+"""用模板的文档可以写 ::: 块和 [文字]{.类名}。除了 class，什么属性都不能加。"""
 import re
 import unittest
 
-from support import RenderTest
+from support import RenderTest, texts
 
 NONE = "template: none"
 
@@ -82,19 +82,78 @@ class Blocks(RenderTest):
         self.assertIn("data-line", self.render(f"---\n{NONE}\n---\n::: job\ntext\n:::")["html"])
 
 
-class OtherTemplates(RenderTest):
+class WithNumbered(RenderTest):
     BODY = "[a]{.date}\n\n::: job\nx\n:::"
 
-    def test_plain_documents_and_numbered_leave_them_alone(self):
-        for head in ("title: t", "template: numbered", "template: report"):
+    def test_plain_documents_leave_them_alone(self):
+        html = self.html(self.BODY, "title: t")
+        self.assertIn("[a]{.date}", html)
+        self.assertIn("::: job", html)
+
+    def test_numbered_and_report_support_them(self):
+        for head in ("template: numbered", "template: report"):
             with self.subTest(head):
                 html = self.html(self.BODY, head)
-                self.assertIn("[a]{.date}", html)
-                self.assertIn("::: job", html)
+                self.assertIn('<span class="date">a</span>', html)
+                self.assertIn('<div class="job">', html)
 
-    def test_figures_is_a_normal_block_in_none(self):
+    def test_figures_stays_a_group(self):
         self.assertIn('<div class="figures">', self.html("::: figures\ntext\n:::", NONE))
-        self.assertIn('class="figure-group"', self.html("::: figures\n![a](b.png)\n:::", "template: numbered"))
+        for source in ("::: figures\n![a](b.png)\n:::", "::: figures {#fig:x cols=3}\n![a](b.png)\n:::"):
+            with self.subTest(source):
+                html = self.html(source, "template: numbered")
+                self.assertIn('class="figure-group"', html)
+                self.assertNotIn("<div class=\"figures", html)
+
+    def test_only_class_is_allowed(self):
+        for source in ('[a]{style="x"}', "[a]{#x}", "[a]{onclick=y}"):
+            with self.subTest(source):
+                self.assertNotIn("<span", self.html(source, "template: numbered"))
+        self.assertNotIn("<div", self.html('::: x" onclick="y\nz\n:::', "template: numbered"))
+
+    def test_reference_is_not_swallowed(self):
+        html = self.html("# a\n\n![t](a.png){#fig:a}\n\n[@fig:a]{.k}", "template: numbered")
+        self.assertEqual(texts(html, "xref"), ["图 1-1"])
+        self.assertIn("{.k}", html)
+
+    def test_reference_inside_a_span(self):
+        html = self.html("# a\n\n![t](a.png){#fig:a}\n\n[见 [@fig:a] 所示]{.note}", "template: numbered")
+        self.assertRegex(html, r'<span class="note">见 <a class="xref"[^>]*>图 1-1</a> 所示</span>')
+
+    def test_missing_reference_inside_a_span_stands_out(self):
+        self.assertIn('xref-missing', self.html("[见 [@fig:no]]{.note}", "template: numbered"))
+
+    def test_numbering_inside_a_block(self):
+        body = "# a\n\n::: box\n## b {#sec:b}\n\n![t](a.png){#fig:a}\n\n: T {#tbl:t}\n\n| A |\n| --- |\n| 1 |\n\n$$ x $$ {#eq:e}\n\n```python title=\"c\"\nx\n```\n:::\n\n[@sec:b] [@fig:a] [@tbl:t] [@eq:e]"
+        html = self.html(body, "template: numbered")
+        self.assertIn('<div class="box">', html)
+        self.assertEqual(texts(html, "heading-number"), ["1", "1.1"])
+        self.assertEqual(texts(html, "caption-label"), ["图 1-1", "表 1-1", "代码 1-1"])
+        self.assertEqual(texts(html, "xref"), ["第 1.1 节", "图 1-1", "表 1-1", "式 (1-1)"])
+        self.assertLess(html.index('<div class="box">'), html.index("图 1-1"))
+        self.assertLess(html.index("代码 1-1"), html.index("</div>\n<p>"))
+
+    def test_figure_group_inside_a_block(self):
+        html = self.html(":::: box\n::: figures {#fig:g}\n![a](a.png)\n:::\n::::\n\n[@fig:g]", "template: numbered")
+        self.assertLess(html.index('class="box"'), html.index("figure-group"))
+        self.assertEqual(texts(html, "xref"), ["图 1"])
+
+    def test_page_break_inside_a_block(self):
+        self.assertIn('class="page-break"', self.html("::: box\n\\newpage\n:::", "template: numbered"))
+
+    def test_span_in_titles_and_captions(self):
+        html = self.html("# 题 [x]{.k} {#sec:a}\n\n![图 [y]{.k}](a.png)\n\n: 表 [z]{.k} {#tbl:t}\n\n| A |\n| --- |\n| 1 |\n\n[@sec:a] [@tbl:t]", "template: numbered")
+        for text in ("x", "y", "z"):
+            with self.subTest(text):
+                self.assertIn(f'<span class="k">{text}</span>', html)
+        self.assertEqual(texts(html, "xref"), ["第 1 章", "表 1-1"])
+        self.assertNotIn("{#", html)
+        self.assertNotIn("{.k}", html)
+
+    def test_span_in_front_matter(self):
+        html = self.render("---\ntemplate: numbered\ntitle: T [x]{.k}\nabstract: A [y]{.k}\n---\nbody")["html"]
+        self.assertIn('<span class="k">x</span>', html)
+        self.assertIn('<span class="k">y</span>', html)
 
 
 if __name__ == "__main__":

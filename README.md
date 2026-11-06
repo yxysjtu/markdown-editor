@@ -181,7 +181,7 @@ style:
 模板文件的 `extends` 决定它从哪里开始，可以一层层继承：
 
 ```text
-none       内置，普通文档，支持 ::: 块和 [文字]{.类名}
+none       内置，普通文档
 numbered   内置，加上标题、图、表、公式的自动编号和交叉引用
 report     templates/report.md，extends: numbered，再加上 report.css 的外观
 my-school  你写的模板，extends: report，只写要改的项
@@ -228,10 +228,11 @@ h2 { border-bottom: 1px solid var(--accent); }
 - **页面**：纸张、边距和页码用 `paper`、`page-margin`、`page-numbers` 设置，CSS 里写 `@page` 不生效。
 - **页头**：`extends: none` 时，默认的题目、日期和标签页头仍然会显示，不想要时可以不写这些字段，或者写 `.doc-head { display: none; }`。基于 `numbered` 时，题目、作者和摘要显示在正文开头，可以用的 class 见下面的“模板能用的 class”。
 - **基于报告**：写 `extends: report` 再加 `css`，编号、交叉引用和报告的所有选项都保留，CSS 再覆盖外观。子模板的 CSS 写在后面，直接写 `h1` 就能盖过 `report.css`。
-- **加 class**：基于 `none` 的文档还能用下面的两种写法，给内容加上 class，再由 CSS 决定样式：
+- **加 class**：用模板的文档（基于 `none` 或 `numbered` 都可以）还能用下面的两种写法，给内容加上 class，再由 CSS 决定样式：
   - `[文字]{.date}` 生成 `<span class="date">`，比如 `### 公司 [2020 – 至今]{.date}`。写在标题里时，公司和日期可以用 CSS 分到左右两边，但这段文字也会进入 PDF 书签，不想要时写 `pdf-bookmarks: false`。
   - 单独一行的 `::: contact` 到 `:::` 之间的内容放进 `<div class="contact">`，里面可以写任意 Markdown。可以写几个名字（`::: job current`）；要嵌套时外层多写几个冒号（`:::: outer`）。
-  - 只能加 class，`{#id}`、`{style=...}` 这些写法不生效，会原样显示。基于 `numbered` 的模板和普通文档不支持这两种写法，也会原样显示。
+  - 只能加 class，`{#id}`、`{style=...}` 这些写法不生效，会原样显示。没有用模板的普通文档不支持这两种写法，也会原样显示。
+  - 基于 `numbered` 时，`::: figures` 仍然是图组，块里的标题、图和表照常编号，`[文字]{.类名}` 里可以写引用：`[见 [@fig:a]]{.note}`。引用本身不能直接加 class，`[@fig:a]{.note}` 里的 `{.note}` 会原样显示。
 - **联网和安全**：CSS 不能加载外部内容，`@import` 和指向网址的 `url()` 都不允许，字体只能用电脑上装的（`@font-face` 里写 `local(...)`），图片只能写 `url(data:...)`。字符串以外不能写反斜杠。文件有这些问题或括号不配对时，整个 CSS 都不用，预览顶部会说明原因。模板 CSS 不能运行脚本，但可以改变文档的显示内容，别人给的模板要留意这一点。
 - **浏览器**：需要 Chrome 或 Edge 120 以上，更旧的版本不认识这种写法，模板 CSS 里的规则不会生效。
 
