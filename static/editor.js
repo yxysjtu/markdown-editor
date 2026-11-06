@@ -475,7 +475,15 @@
         var summary = document.createElement('summary');
         summary.textContent = item.name;
         summary.title = item.path;
-        summary.addEventListener('click', function () { selectFolder(item.path); });
+        summary.dataset.path = item.path;
+        summary.addEventListener('click', function (event) {
+          if (isMultiSelectClick(event)) {
+            event.preventDefault(); // 不要折叠文件夹
+            toggleSelected(item.path);
+          } else {
+            selectOnly(item.path);
+          }
+        });
         enableTreeActions(summary, item);
         details.appendChild(summary);
         var children = document.createElement('div');
@@ -490,7 +498,10 @@
         button.textContent = item.name;
         button.title = item.path;
         button.dataset.path = item.path;
-        button.addEventListener('click', function () { openFile(item.path); });
+        button.addEventListener('click', function (event) {
+          if (isMultiSelectClick(event)) toggleSelected(item.path);
+          else openFile(item.path);
+        });
         enableTreeActions(button, item);
         parent.appendChild(button);
       }
@@ -499,7 +510,10 @@
 
   // ---------- 移动和重命名 ----------
   var DRAG_TYPE = 'application/x-markdown-editor-path'; // 不用 text/plain，否则拖到编辑区会把路径插进正文
-  var draggedPath = null;
+  var draggedPaths = null; // 正在拖动的文件和文件夹
+  var lastMoveError = '';
+  var RENAME_DOUBLE_CLICK_MS = 300; // 两次点击间隔不超过这个时间，才算双击重命名
+  var clicks = { path: null, previous: -Infinity, last: -Infinity }; // 不存在行上：切回窗口时文件树会重新渲染
   var renaming = false;
   var opening = Promise.resolve(); // 进行中的打开文件。双击的第一下会打开文件，移动前要等它完成
 
@@ -528,6 +542,7 @@
     }).then(function (ok) {
       if (!ok) return null;
       return request('/api/move', { root: root, from: from, to: to }).then(function (data) {
+        if (status.classList.contains('error')) keepStatus(''); // 这次成功了，之前的错误不该还留着
         if (affectsCurrent) {
           current.path = data.path + current.path.slice(from.length);
           filePath.textContent = current.path;
@@ -535,15 +550,16 @@
           history.replaceState(null, '', location.search + '#' + encodeURIComponent(current.path));
           renderPreview(); // 图片的相对路径变了
         }
-        if (selectedFolder !== null && isInside(selectedFolder, from)) {
-          selectedFolder = data.path + selectedFolder.slice(from.length);
-        }
+        selection = new Set(Array.from(selection, function (path) {
+          return isInside(path, from) ? data.path + path.slice(from.length) : path;
+        }));
         return loadTree().then(function () {
           if (folderToShow !== undefined) openFolders(folderToShow);
           return data.path;
         });
       });
     }).catch(function (err) {
+      lastMoveError = err.message;
       showStatus(err.message, true);
       return null;
     }).then(function (result) {
@@ -602,19 +618,28 @@
 
   function enableTreeActions(row, item) {
     row.draggable = true;
+    row.addEventListener('click', function (event) {
+      var samePath = clicks.path === item.path;
+      clicks = { path: item.path, previous: samePath ? clicks.last : -Infinity, last: event.timeStamp };
+    });
     row.addEventListener('dblclick', function (event) {
       event.preventDefault();
+      // 系统的双击判定比较宽松（Windows 默认约 500ms），连续点文件夹时容易误触发重命名
+      if (clicks.last - clicks.previous > RENAME_DOUBLE_CLICK_MS || isMultiSelectClick(event)) return;
       startRename(row, item);
     });
     row.addEventListener('dragstart', function (event) {
-      draggedPath = item.path;
+      // 拖动选中的项时一起移动，拖动没选中的项时只移动它自己
+      draggedPaths = selection.has(item.path) ? topLevelPaths(selection) : [item.path];
       event.dataTransfer.setData(DRAG_TYPE, item.path);
       event.dataTransfer.effectAllowed = 'move';
-      row.classList.add('tree-dragging');
+      treeRows().forEach(function (other) {
+        if (draggedPaths.indexOf(other.dataset.path) !== -1) other.classList.add('tree-dragging');
+      });
     });
     row.addEventListener('dragend', function () {
-      draggedPath = null;
-      row.classList.remove('tree-dragging');
+      draggedPaths = null;
+      tree.querySelectorAll('.tree-dragging').forEach(function (other) { other.classList.remove('tree-dragging'); });
       clearDropTarget();
     });
   }
@@ -631,8 +656,27 @@
   }
 
   function canDropInto(folder) {
-    if (draggedPath === null || parentOf(draggedPath) === folder) return false;
-    return folder !== draggedPath && folder.indexOf(draggedPath + '/') !== 0; // 文件夹不能放进自己里面
+    if (draggedPaths === null) return false;
+    var movesSomething = draggedPaths.some(function (path) { return parentOf(path) !== folder; });
+    var intoItself = draggedPaths.some(function (path) { return isInside(folder, path); }); // 文件夹不能放进自己里面
+    return movesSomething && !intoItself;
+  }
+
+  function moveMany(paths, folder) {
+    var moving = paths.filter(function (path) { return parentOf(path) !== folder; });
+    var moved = 0;
+    lastMoveError = '';
+    return moving.reduce(function (done, from) {
+      return done.then(function () {
+        return movePath(from, joinPath(folder, from.split('/').pop()), folder);
+      }).then(function (path) {
+        if (path !== null) moved++;
+      });
+    }, Promise.resolve()).then(function () {
+      if (moved === moving.length) showStatus('Moved ' + moved + (moved === 1 ? ' item' : ' items'));
+      else if (moving.length > 1) showStatus('Moved ' + moved + ' of ' + moving.length + ' items: ' + lastMoveError, true);
+      // 只有一项且失败时，错误就是 movePath 显示的那条
+    });
   }
 
   tree.addEventListener('dragover', function (event) {
@@ -649,63 +693,185 @@
   });
   tree.addEventListener('drop', function (event) {
     var folder = dropFolderAt(event.target);
-    var from = draggedPath;
+    var paths = draggedPaths;
+    var allowed = canDropInto(folder);
     clearDropTarget();
-    if (!canDropInto(folder)) return;
+    if (!allowed) return;
     event.preventDefault();
-    movePath(from, joinPath(folder, from.split('/').pop()), folder);
+    moveMany(paths, folder);
   });
 
-  // ---------- 选中文件夹 ----------
-  var selectedFolder = null; // 选中的文件夹。没选中时，垃圾桶删除当前打开的文件
+  // ---------- 选中 ----------
+  // 选中的文件和文件夹。单击文件夹选中它，Ctrl+点击或框选可以选中多个。没选中时，垃圾桶删除当前打开的文件
+  var selection = new Set();
 
   function isInside(path, folder) { // path 就是 folder，或者在 folder 里面
     return path === folder || path.indexOf(folder + '/') === 0;
   }
 
-  function selectFolder(path) {
-    selectedFolder = path;
+  function isMultiSelectClick(event) {
+    return event.ctrlKey || event.metaKey;
+  }
+
+  function treeRows() {
+    return tree.querySelectorAll('summary, .tree-file');
+  }
+
+  function isFolderPath(path) {
+    return !!tree.querySelector('details[data-path="' + CSS.escape(path) + '"]');
+  }
+
+  // 文件夹和它里面的文件都选中时，只操作文件夹
+  function topLevelPaths(paths) {
+    var all = Array.from(paths);
+    return all.filter(function (path) {
+      return !all.some(function (other) { return other !== path && isInside(path, other); });
+    });
+  }
+
+  function selectOnly(path) {
+    selection = new Set([path]);
+    markActive();
+  }
+
+  function toggleSelected(path) {
+    if (selection.has(path)) selection.delete(path);
+    else selection.add(path);
+    markActive();
+  }
+
+  function clearSelection() {
+    selection = new Set();
     markActive();
   }
 
   // 新建文件和文件夹的默认位置：选中的文件夹，否则是当前文件所在的文件夹
   function newItemParent() {
-    if (selectedFolder !== null) return selectedFolder;
+    var only = selection.size === 1 ? Array.from(selection)[0] : null;
+    if (only !== null && isFolderPath(only)) return only;
     return current ? parentOf(current.path) : '';
   }
 
-  function clearSelectedFolder() {
-    selectedFolder = null;
-    markActive();
-  }
-
   function updateDeleteButton() {
-    var target = selectedFolder !== null ? selectedFolder : current && current.path;
-    deleteButton.disabled = !target;
-    var label = target ? 'Move "' + target + '" to the Recycle Bin' : 'Select a file or folder to delete';
+    var label = 'Select a file or folder to delete';
+    if (selection.size > 1) {
+      label = 'Move ' + topLevelPaths(selection).length + ' selected items to the Recycle Bin';
+    } else {
+      var target = selection.size === 1 ? Array.from(selection)[0] : current && current.path;
+      if (target) label = 'Move "' + target + '" to the Recycle Bin';
+    }
+    deleteButton.disabled = selection.size === 0 && !current;
     deleteButton.title = label;
     deleteButton.setAttribute('aria-label', label);
   }
 
-  // 点文件树的空白处取消选中
-  tree.addEventListener('click', function (event) {
-    if (!event.target.closest('summary, .tree-file')) clearSelectedFolder();
+  function markActive() {
+    var exists = new Set();
+    treeRows().forEach(function (row) {
+      var path = row.dataset.path;
+      exists.add(path);
+      row.classList.toggle('tree-selected', selection.has(path));
+      if (row.tagName === 'BUTTON') row.classList.toggle('active', !!current && path === current.path);
+    });
+    selection.forEach(function (path) { // 比如在资源管理器里被删了
+      if (!exists.has(path)) selection.delete(path);
+    });
+    updateDeleteButton();
+  }
+
+  // ---------- 框选 ----------
+  // 文件行本身可以拖动移动，所以框选要从空白处开始
+  var marquee = null;
+  var ignoreNextTreeClick = false;
+
+  function rowIsShown(row) { // 折叠的文件夹里的项看不见，不参与框选
+    var container = row.tagName === 'SUMMARY' ? row.parentElement.parentElement : row.parentElement;
+    return !container.closest('details:not([open])');
+  }
+
+  function updateMarquee() {
+    var box = tree.getBoundingClientRect();
+    var currentX = marquee.clientX - box.left + tree.scrollLeft;
+    var currentY = marquee.clientY - box.top + tree.scrollTop;
+    var left = Math.min(marquee.startX, currentX);
+    var top = Math.min(marquee.startY, currentY);
+    var width = Math.abs(currentX - marquee.startX);
+    var height = Math.abs(currentY - marquee.startY);
+    if (!marquee.element.parentElement) tree.appendChild(marquee.element); // 文件树可能刚重新渲染过
+    marquee.element.style.left = left + 'px';
+    marquee.element.style.top = top + 'px';
+    marquee.element.style.width = width + 'px';
+    marquee.element.style.height = height + 'px';
+
+    var next = new Set(marquee.base);
+    var viewLeft = left + box.left - tree.scrollLeft;
+    var viewTop = top + box.top - tree.scrollTop;
+    treeRows().forEach(function (row) {
+      if (!rowIsShown(row)) return;
+      var rect = row.getBoundingClientRect();
+      var hit = rect.left < viewLeft + width && rect.right > viewLeft && rect.top < viewTop + height && rect.bottom > viewTop;
+      if (hit) next.add(row.dataset.path);
+    });
+    selection = next;
+    markActive();
+  }
+
+  function endMarquee() {
+    document.removeEventListener('mousemove', onMarqueeMove);
+    document.removeEventListener('mouseup', endMarquee);
+    clearInterval(marquee.scrollTimer);
+    marquee.element.remove();
+    ignoreNextTreeClick = marquee.moved; // 框选结束时的 click 不算“点空白处”
+    marquee = null;
+    setTimeout(function () { ignoreNextTreeClick = false; }, 0);
+  }
+
+  function onMarqueeMove(event) {
+    marquee.clientX = event.clientX;
+    marquee.clientY = event.clientY;
+    if (!marquee.moved) {
+      var box = tree.getBoundingClientRect();
+      var distance = Math.abs(event.clientX - box.left + tree.scrollLeft - marquee.startX) +
+        Math.abs(event.clientY - box.top + tree.scrollTop - marquee.startY);
+      if (distance < 4) return; // 手抖不算框选
+      marquee.moved = true;
+    }
+    updateMarquee();
+  }
+
+  tree.addEventListener('mousedown', function (event) {
+    if (event.button !== 0 || event.target.closest('summary, button, input')) return;
+    var box = tree.getBoundingClientRect();
+    if (event.clientX >= box.left + tree.clientWidth || event.clientY >= box.top + tree.clientHeight) return; // 点的是滚动条
+    event.preventDefault(); // 不要选中文字
+    var element = document.createElement('div');
+    element.className = 'tree-marquee';
+    marquee = {
+      element: element,
+      startX: event.clientX - box.left + tree.scrollLeft,
+      startY: event.clientY - box.top + tree.scrollTop,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      base: isMultiSelectClick(event) ? new Set(selection) : new Set(),
+      moved: false,
+      scrollTimer: setInterval(function () { // 拖到上下边缘时自动滚动
+        if (!marquee.moved) return;
+        var view = tree.getBoundingClientRect();
+        if (marquee.clientY < view.top + 24) tree.scrollTop -= 12;
+        else if (marquee.clientY > view.bottom - 24) tree.scrollTop += 12;
+        else return;
+        updateMarquee();
+      }, 30)
+    };
+    document.addEventListener('mousemove', onMarqueeMove);
+    document.addEventListener('mouseup', endMarquee);
   });
 
-  function markActive() {
-    var selectedStillExists = false;
-    tree.querySelectorAll('details').forEach(function (details) {
-      var selected = details.dataset.path === selectedFolder;
-      if (selected) selectedStillExists = true;
-      details.querySelector('summary').classList.toggle('tree-selected', selected);
-    });
-    if (!selectedStillExists) selectedFolder = null; // 比如在资源管理器里被删了
-    updateDeleteButton();
-    tree.querySelectorAll('.tree-file').forEach(function (button) {
-      var active = !!current && button.dataset.path === current.path;
-      button.classList.toggle('active', active);
-    });
-  }
+  // 点文件树的空白处取消选中
+  tree.addEventListener('click', function (event) {
+    if (ignoreNextTreeClick || isMultiSelectClick(event)) return;
+    if (!event.target.closest('summary, .tree-file')) clearSelection();
+  });
 
   var collapseButton = document.createElement('button'); // 文件树每次重新渲染时都放回根目录那一行
   collapseButton.type = 'button';
@@ -777,42 +943,76 @@
     history.replaceState(null, '', location.search);
   }
 
-  function deleteMessage(path, files) {
-    if (files === null) return 'Move "' + path + '" to the Recycle Bin?';
-    if (files === 0) return 'Move the empty folder "' + path + '" to the Recycle Bin?';
-    return 'Move folder "' + path + '" and ' + files + (files === 1 ? ' file' : ' files') + ' to the Recycle Bin?';
+  function deleteMessage(paths, fileCounts) {
+    if (paths.length === 1) {
+      var path = paths[0];
+      var files = fileCounts[path];
+      if (files === null) return 'Move "' + path + '" to the Recycle Bin?';
+      if (files === 0) return 'Move the empty folder "' + path + '" to the Recycle Bin?';
+      return 'Move folder "' + path + '" and ' + files + (files === 1 ? ' file' : ' files') + ' to the Recycle Bin?';
+    }
+    var lines = paths.slice(0, 10).map(function (item) {
+      var count = fileCounts[item];
+      return '  ' + item + (count === null ? '' : ' (folder, ' + count + (count === 1 ? ' file)' : ' files)'));
+    });
+    if (paths.length > 10) lines.push('  ... and ' + (paths.length - 10) + ' more');
+    return 'Move these ' + paths.length + ' items to the Recycle Bin?\n\n' + lines.join('\n');
   }
 
-  function deleteTarget(path, files) {
-    var affectsCurrent = !!current && isInside(current.path, path);
-    var message = deleteMessage(path, files);
+  function deleteTargets(paths, fileCounts) {
+    var inTargets = function (path) {
+      return paths.some(function (target) { return isInside(path, target); });
+    };
+    var affectsCurrent = !!current && inTargets(current.path);
+    var message = deleteMessage(paths, fileCounts);
     if (affectsCurrent && isDirty()) message += '\n\nUnsaved changes in "' + current.path + '" will be lost.';
     if (!window.confirm(message)) return Promise.resolve();
     if (affectsCurrent) {
       clearTimeout(saveTimer); // 要删了，不用再保存，否则可能把它重新写回去
       cm.setOption('readOnly', true);
     }
-    return (saving || Promise.resolve()).then(function () {
-      return request('/api/delete', { root: root, path: path });
-    }).then(function () {
-      if (selectedFolder === path) selectedFolder = null;
-      if (affectsCurrent) closeCurrentFile();
-      showStatus('Moved to the Recycle Bin');
+    var deleted = [];
+    var firstError = '';
+    return paths.reduce(function (done, path) {
+      return done.then(function () {
+        return request('/api/delete', { root: root, path: path });
+      }).then(function () {
+        deleted.push(path);
+      }).catch(function (err) {
+        firstError = firstError || err.message;
+      });
+    }, saving || Promise.resolve()).then(function () {
+      selection.forEach(function (path) {
+        if (deleted.some(function (target) { return isInside(path, target); })) selection.delete(path);
+      });
+      if (affectsCurrent) {
+        if (deleted.some(function (target) { return isInside(current.path, target); })) closeCurrentFile();
+        else cm.setOption('readOnly', false); // 没删成，继续编辑
+      }
+      if (firstError) {
+        showStatus(paths.length === 1 ? firstError : 'Moved ' + deleted.length + ' of ' + paths.length + ' items to the Recycle Bin: ' + firstError, true);
+      } else {
+        showStatus(paths.length === 1 ? 'Moved to the Recycle Bin' : 'Moved ' + paths.length + ' items to the Recycle Bin');
+      }
       return loadTree();
-    }).catch(function (err) {
-      if (affectsCurrent) cm.setOption('readOnly', false); // 没删成，继续编辑
-      showStatus(err.message, true);
     });
   }
 
   deleteButton.addEventListener('click', function () {
     opening.then(function () { // 等进行中的打开完成，才能判断删除会不会影响正在编辑的文件
-      if (selectedFolder === null) return current ? deleteTarget(current.path, null) : null;
-      var path = selectedFolder;
-      return request('/api/folder-info?root=' + encodeURIComponent(root) + '&path=' + encodeURIComponent(path))
-        .then(function (info) { return deleteTarget(path, info.files); })
-        .catch(function (err) { showStatus(err.message, true); });
-    });
+      var paths = selection.size ? topLevelPaths(selection) : current ? [current.path] : [];
+      if (!paths.length) return null;
+      var fileCounts = {};
+      return Promise.all(paths.map(function (path) {
+        fileCounts[path] = null;
+        if (!isFolderPath(path)) return null;
+        return request('/api/folder-info?root=' + encodeURIComponent(root) + '&path=' + encodeURIComponent(path)).then(function (info) {
+          fileCounts[path] = info.files;
+        });
+      })).then(function () {
+        return deleteTargets(paths, fileCounts);
+      });
+    }).catch(function (err) { showStatus(err.message, true); });
   });
 
   // ---------- 导出 ----------
@@ -1072,7 +1272,7 @@
   }
 
   function openFile(path) {
-    clearSelectedFolder(); // 点了文件，垃圾桶就回到删除这个文件
+    clearSelection(); // 点了文件，垃圾桶就回到删除这个文件
     if (current && current.path === path) return Promise.resolve(); // 重新加载会清空撤销记录
     opening = opening.then(function () {
       return saveNow();

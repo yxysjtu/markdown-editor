@@ -37,7 +37,7 @@ body.mode-edit [data-mode="edit"], body.mode-split [data-mode="split"], body.mod
 
 /* 三栏布局 */
 .editor-main { flex: 1; min-height: 0; display: flex; }
-.file-tree { flex: none; width: 230px; overflow: auto; padding: 0 6px 24px; border-right: 1px solid var(--border); background: var(--surface); font-size: 13px; }
+.file-tree { position: relative; flex: none; width: 230px; overflow: auto; padding: 0 16px 48px 6px; border-right: 1px solid var(--border); background: var(--surface); font-size: 13px; }
 body.tree-collapsed .file-tree { display: none; }
 /* 侧栏收起后留下的窄边，展开按钮和收起按钮在同一高度 */
 .tree-rail { display: none; flex: none; padding: 6px; border-right: 1px solid var(--border); background: var(--surface); }
@@ -80,7 +80,7 @@ body.no-file .doc { display: none; }
 
 /* 文件树 */
 /* 根目录这一行固定在顶部，文件很多时也能点到收起按钮 */
-.tree-root { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 4px; margin: 0 -6px; padding: 6px 6px 6px 14px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 600; }
+.tree-root { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 4px; margin: 0 -16px 0 -6px; padding: 6px 6px 6px 14px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 600; }
 .tree-root-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-collapse { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted); font-size: 18px; line-height: 1; }
 .tree-collapse:hover { background: var(--border); color: var(--text); }
@@ -94,7 +94,9 @@ body.no-file .doc { display: none; }
 .tree-children { padding-left: 12px; }
 .tree-file.active { background: var(--text); color: #fff; }
 .tree-empty { padding: 3px 8px; color: var(--muted); }
-.file-tree details > summary.tree-selected, .file-tree details > summary.tree-selected:hover { background: #dbe7f6; }
+.file-tree details > summary.tree-selected, .file-tree details > summary.tree-selected:hover, .tree-file.tree-selected, .tree-file.tree-selected:hover { background: #dbe7f6; color: var(--text); }
+.tree-file.active.tree-selected, .tree-file.active.tree-selected:hover { background: var(--accent); color: #fff; }
+.tree-marquee { position: absolute; z-index: 2; border: 1px solid var(--accent); background: rgba(31, 95, 168, .12); pointer-events: none; }
 .tree-rename { width: calc(100% - 20px); height: 22px; padding: 0 4px; border: 1px solid var(--accent); border-radius: 3px; background: var(--bg); color: var(--text); font: inherit; font-weight: 400; }
 .tree-dragging { opacity: .45; }
 /* 拖拽时高亮放下的位置 */
