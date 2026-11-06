@@ -1129,7 +1129,7 @@
           '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
           '<title>' + escapeHtml(title) + '</title>\n' +
           (body.querySelector('.katex') ? '<link rel="stylesheet" href="' + KATEX_CSS + '">\n' : '') +
-          '<style>\n' + results[1] + '\n' + results[2] + '\n</style>\n</head>\n' +
+          '<style>\n' + results[1] + '\n' + results[2] + '\n' + data.report_style + '\n</style>\n</head>\n' +
           '<body class="exported' + (toc ? ' has-toc' : '') + '">\n' + toc + '<article class="doc' + (isReport ? ' academic' : '') + '">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
         return { html: html, failedImages: failedImages };
       });
@@ -1399,6 +1399,7 @@
       previewError.textContent = data.warning;
       var isReport = data.template === 'report'; // 学术报告的题目、作者和摘要在正文的开头
       document.getElementById('preview-doc').classList.toggle('academic', isReport);
+      document.getElementById('report-style').textContent = data.report_style;
       document.getElementById('preview-head').hidden = isReport || !(data.title || data.date || data.tags.length);
       document.getElementById('preview-title').hidden = !data.title;
       document.getElementById('preview-title').textContent = data.title;

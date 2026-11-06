@@ -34,6 +34,7 @@ from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 
 import academic
+import report_style
 
 try:
     from send2trash import TrashPermissionError, send2trash
@@ -481,7 +482,7 @@ def make_markdown():
 
 
 MD = make_markdown()
-MD_REPORT = academic.enable(make_markdown())  # 文件开头写 template: report 时用这个
+MD_REPORT = academic.enable(make_markdown())  # 用学术报告模板时用这个
 
 
 def parse_tags(value):
@@ -520,6 +521,25 @@ def rewrite_images(html, root, rel):
     return re.sub(r'(<img\b[^>]*?\bsrc=")(?![a-zA-Z][a-zA-Z0-9+.-]*:|/|#)([^"]+)"', replace, html)
 
 
+def is_template_file(template):
+    return isinstance(template, str) and (template.startswith(("./", "../")) or template.lower().endswith(".md"))
+
+
+def read_template_file(root, rel, template):
+    """template: ./my-school.md 指向的文件，路径相对于当前文件。返回 (它的 frontmatter, 问题)。"""
+    target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), template))
+    try:
+        content = api_read(root, target)["content"]
+    except ApiError as err:  # 打开的文件夹以外的路径也会到这里
+        return {}, f'Cannot read template file "{template}": {err.message}. It must be a UTF-8 Markdown file inside the open folder.'
+    meta, _, problem = split_frontmatter(content)
+    if problem:
+        return {}, f'Template file "{template}": {problem}'
+    if meta.get("extends") != "report":
+        return {}, f'Template file "{template}" must have "extends: report" at the top.'
+    return meta, ""
+
+
 def api_render(data):
     root = data.get("root")
     rel = data.get("path")
@@ -527,25 +547,39 @@ def api_render(data):
     source = data.get("content") or ""
     meta, body, warning = split_frontmatter(source)
     env = {"line_offset": source.count("\n") - body.count("\n")}
-    template = meta.get("template")
-    if template == "report":
-        text = academic.text_for(meta)
+    problems = [warning] if warning else []
+    template = meta.get("template") or meta.get("extends")  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果
+    from_file = {}
+    if is_template_file(template):
+        from_file, problem = read_template_file(root, rel, template)
+        if problem:
+            problems.append(problem)
+    is_report = template == "report" or is_template_file(template)
+    report_css = ""
+    toc_title = "Table of Contents"
+    if is_report:
+        values, style_problems = report_style.read_style(from_file.get("style"), meta.get("style"))
+        problems += style_problems
+        report_css = report_style.build_css(values)
+        text = report_style.apply_text(academic.text_for(meta.get("lang") or from_file.get("lang")), values)
+        toc_title = text["toc"]
         env["report_text"] = text
         render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
         html = academic.front_matter_html(meta, text, render_inline) + MD_REPORT.render(academic.prepare_source(body), env)
     else:
         html = MD.render(body, env)
         if template:
-            warning = warning or f'Unknown template "{template}". The available template is: report'
+            problems.append(f'Unknown template "{template}". Use "report", or the path of a template file like ./my-template.md')
     date = meta.get("date")
     return {
         "title": str(meta.get("title") or ""),
         "date": str(date)[:10] if date else "",
         "tags": parse_tags(meta.get("tags")),
         "html": rewrite_images(html, root, rel),
-        "warning": warning,
-        "template": "report" if template == "report" else "",
-        "toc_title": academic.text_for(meta)["toc"] if template == "report" else "Table of Contents",
+        "warning": "\n".join(problems),
+        "template": "report" if is_report else "",
+        "report_style": report_css,
+        "toc_title": toc_title,
     }
 
 

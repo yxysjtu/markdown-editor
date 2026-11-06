@@ -44,7 +44,7 @@ bash start.sh "C:/Users/me/notes"
 
 ## 学术报告模板
 
-在文件开头写 `template: report`，预览就会变成毕业论文和学术报告的版式，并自动给标题、图、表、公式编号。其他文件不受影响。例子在 `examples/academic-report` 里，打开这个文件夹就能看到效果。
+在文件开头写 `template: report`，预览就会变成毕业论文和学术报告的版式，并自动给标题、图、表、公式编号。其他文件不受影响。字体、字号、编号格式等都可以改，见后面的“自定义样式”。例子在 `examples/academic-report` 里，打开这个文件夹就能看到效果。
 
 ```markdown
 ---
@@ -107,9 +107,70 @@ $$ {#eq:energy}
 
 工具栏的导出按钮选 PDF，会直接下载这个版式的 PDF，带页码。30 行以内的代码块尽量整块放在一页，更长的会跨页，每页的框各自闭合。`\newpage` 总是强制换页，如果前面的内容刚好跨到新的一页，那一页后面就会留白。PDF 阅读器的侧边栏里有书签目录，显示一到三级标题，点击可以跳转。脚注目前显示在文章末尾，不在每页底部。
 
-版式：A4，边距上下 2.54cm、左右 3.17cm；正文宋体小四（英文 Times New Roman），1.5 倍行距，首行缩进两字；题目黑体二号，一、二、三级标题黑体三号、四号、小四；图题、表题和表格五号。样式在 `static/document.css` 的“学术报告模板”部分。
+默认版式：A4，边距上下 2.54cm、左右 3.17cm；正文宋体小四（英文 Times New Roman），1.5 倍行距，首行缩进两字；题目黑体二号，一、二、三级标题黑体三号、四号、小四；图题、表题和表格五号。默认样式在 `static/document.css` 的“学术报告模板”部分，要改样式用不着动它，见下面的“自定义样式”。
 
 图、表、公式按章编号，第一个标题之前的内容没有章号，就直接编 `图 1`。参考文献目前要自己手写，不会自动生成。
+
+### 自定义样式
+
+不用写 CSS，在 frontmatter 的 `style` 里写要改的项就行，没写的项保持默认：
+
+```markdown
+---
+template: report
+style:
+  font-size: 五号
+  heading-1-align: left
+  numbering: "2.1"
+---
+```
+
+如果多份文档要用同一套样式，可以把它放到单独的模板文件里，比如 `my-school.md`：
+
+```markdown
+---
+extends: report
+style:
+  body-font: Times New Roman, KaiTi
+  page-margin: 3cm 2.5cm
+---
+
+这里写示例内容。打开这个文件，看到的就是模板的效果。
+```
+
+然后在文档里写路径。文档自己的 `style` 仍然可以覆盖个别项，优先级是：内置模板 < 模板文件 < 文档的 `style`。
+
+```markdown
+---
+template: ./my-school.md
+style:
+  heading-1-align: center
+---
+```
+
+- `template` 写 `report` 是内置模板；以 `./`、`../` 开头或以 `.md` 结尾的是模板文件，路径相对于当前文档，必须在打开的文件夹里。
+- 模板文件开头必须写 `extends: report`，目前只能继承内置模板，模板文件不能再继承别的模板文件。模板只提供 `style` 和 `lang`，正文、题目和作者不会进入文档。
+- 导出时样式会嵌进 HTML 和 PDF，不需要带上模板文件。改了模板文件后，切换一下文档或编辑一下内容，预览才会更新。
+- 写错的选项名或值会列在预览顶部，这一项不生效，其他项照常。只能用下表里的选项，所以打开别人给的文件也不会注入任意样式。
+
+例子是 `examples/academic-report` 里的 `template.md` 和 `report_using_template.md`。
+
+| 选项 | 含义 | 写法 |
+| --- | --- | --- |
+| `paper` | 纸张大小 | `A3`、`A4`、`A5`、`B5`、`Letter` |
+| `page-margin` | 页边距 | 和 CSS 一样写 1 到 4 个长度：`2.5cm` 四边相同，`2.54cm 3.17cm` 上下、左右，`3cm 2.5cm 2.5cm 3cm` 上、右、下、左。单位是 `cm`、`mm`、`in`、`pt` |
+| `page-numbers` | PDF 是否显示页码 | `true`、`false` |
+| `body-font` | 正文字体 | 用逗号分隔。英文字体写在前面，中文才会用后面的字体：`Times New Roman, KaiTi` |
+| `font-size` | 正文字号 | `12pt` 或 `小四`，字号名从 `初号` 到 `六号` 都可以 |
+| `line-height` | 行距 | 倍数 `1.5`，或固定值 `20pt` |
+| `first-line-indent` | 首行缩进 | `2em`，`0` 表示不缩进 |
+| `title-font`、`title-size`、`title-align` | 题目的字体、字号、对齐 | 对齐写 `left`、`center`、`right`、`justify` |
+| `heading-1-font`、`heading-1-size`、`heading-1-align` | 一级标题的字体、字号、对齐 | 二、三级把 `1` 换成 `2`、`3` |
+| `caption-size`、`caption-align` | 图题、表题和代码标题的字号、对齐 | |
+| `three-line-table` | 是否用三线表 | `false` 时每个格子都有边框 |
+| `numbering` | 图、表、公式、代码的编号格式 | `"2-1"`（默认）、`"2.1"`，`"1"` 表示全文连续编号，不带章号 |
+| `chapter-format` | 一级标题的编号格式 | `"第{}章"` 显示 `第1章`，`"第{cn}章"` 显示 `第一章`（1 到 99），`[@sec:名字]` 也会跟着变 |
+| `figure-label`、`table-label`、`code-label`、`appendix-label` | 图、表、代码、附录的称呼 | `Fig.` 显示 `Fig. 2-1`。不想要空格时写 `"图{}"`，显示 `图2-1` |
 
 ## 修改编辑区的颜色
 

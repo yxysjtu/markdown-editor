@@ -60,8 +60,23 @@ APPENDIX_TITLE = re.compile(
 )
 
 
-def text_for(meta):
-    return TEXT["en"] if str(meta.get("lang") or "").lower().startswith("en") else TEXT["zh"]
+def text_for(lang):
+    return TEXT["en"] if str(lang or "").lower().startswith("en") else TEXT["zh"]
+
+
+def chinese_number(number):
+    """1 到 99 写成一、十二、二十三，用于“第一章”。超出范围时直接用数字。"""
+    digits = "零一二三四五六七八九"
+    if not 1 <= number <= 99:
+        return str(number)
+    tens, ones = divmod(number, 10)
+    return ("" if tens == 0 else "十" if tens == 1 else digits[tens] + "十") + (digits[ones] if ones else "")
+
+
+def chapter_name(text, number):
+    """一级标题前显示的编号。写了 chapter-format 时是“第一章”这样的格式。"""
+    form = text.get("chapter_format")
+    return form.replace("{cn}", chinese_number(int(number))).replace("{}", number) if form else number
 
 
 def prepare_source(body):
@@ -168,11 +183,16 @@ class Numbering:
         self.appendices = 0
         self.in_appendix = False
         self.items = {"fig": 0, "tbl": 0, "eq": 0, "lst": 0}
+        self.separator = text.get("number_separator", "-")  # 空的表示全文连续编号，不带章号
         self.references = {}  # (类型, 标签) -> (显示的文字, 锚点)
+
+    def start_chapter(self):
+        if self.separator:
+            self.items = dict.fromkeys(self.items, 0)
 
     def next_item(self, kind, label):
         self.items[kind] += 1
-        number = f"{self.chapter}-{self.items[kind]}" if self.chapter else str(self.items[kind])
+        number = f"{self.chapter}{self.separator}{self.items[kind]}" if self.chapter and self.separator else str(self.items[kind])
         anchor = f"{kind}:{label}" if label else None
         if label:
             self.references[(kind, label)] = (self.text[kind].format(number), anchor)
@@ -183,7 +203,7 @@ class Numbering:
         self.in_appendix = True
         self.counts[1:] = [0] * 5
         self.chapter = ascii_uppercase[(self.appendices - 1) % len(ascii_uppercase)]
-        self.items = dict.fromkeys(self.items, 0)
+        self.start_chapter()
         return self.chapter
 
     def next_heading(self, level):
@@ -192,7 +212,7 @@ class Numbering:
         if level == 1:
             self.in_appendix = False
             self.chapter = self.counts[0]
-            self.items = dict.fromkeys(self.items, 0)
+            self.start_chapter()
         parts = [str(max(count, 1)) for count in self.counts[:level]]
         if self.in_appendix:
             parts[0] = self.chapter
@@ -269,14 +289,16 @@ def number_report(state):
                         first.content = first.content[appendix.end():]
                 else:
                     number = numbering.next_heading(level)
-                    shown = number
+                    shown = chapter_name(text, number) if level == 1 else number
                 inline.children.insert(0, html_inline(f'<span class="heading-number">{escape(shown)}</span> '))
                 if label:
                     if numbering.in_appendix:
-                        words = text["appendix"]
+                        reference = text["appendix"].format(number)
+                    elif level == 1 and text.get("chapter_format"):
+                        reference = shown
                     else:
-                        words = text["chapter"] if level == 1 else text["section"]
-                    numbering.references[("sec", label)] = (words.format(number), f"sec:{label}")
+                        reference = (text["chapter"] if level == 1 else text["section"]).format(number)
+                    numbering.references[("sec", label)] = (reference, f"sec:{label}")
             elif label:
                 numbering.references[("sec", label)] = (inline.content, f"sec:{label}")
             if label:
