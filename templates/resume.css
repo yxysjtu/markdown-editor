@@ -14,8 +14,8 @@ h1 {
   text-align: center;
 }
 
-/* 姓名下面的联系方式 */
-h1 + p {
+/* 姓名下面的联系方式，文档里写 ::: contact */
+.contact {
   margin: .2em 0 1em;
   color: #555;
   text-align: center;
@@ -29,7 +29,7 @@ h2 {
   font-size: 13pt;
 }
 
-/* 公司和日期分在左右两边 */
+/* 公司和日期分在左右两边，日期在文档里写 [2020 – 至今]{.date} */
 h3 {
   display: flex;
   justify-content: space-between;

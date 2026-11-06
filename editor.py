@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 import yaml
 from markdown_it import MarkdownIt
 from mdit_py_plugins.anchors import anchors_plugin
+from mdit_py_plugins.container import container_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
@@ -82,6 +83,10 @@ class ApiError(Exception):
         self.status = status
         self.message = message
 
+
+CLASS_NAME = r"[^\W\d][\w-]*"
+BLOCK_CLASSES = re.compile(rf"{CLASS_NAME}(?: {CLASS_NAME})*")
+SPAN_CLASSES = re.compile(rf"\{{\s*(\.{CLASS_NAME}(?:\s+\.{CLASS_NAME})*)\s*\}}")
 
 # ---------- 路径 ----------
 def workspace(root):
@@ -481,8 +486,46 @@ def make_markdown():
     return md
 
 
+def render_block(renderer, tokens, index, options, env):
+    token = tokens[index]
+    if token.nesting == 1:
+        token.attrSet("class", token.info.strip())
+    return renderer.renderToken(tokens, index, options, env)
+
+
+def class_span(state, silent):
+    """[文字]{.date} 生成 <span class="date">。只认 class：style 这些属性会绕开模板 CSS 的检查，
+    所以不用 mdit-py-plugins 的 attrs 插件，它的 allowed 参数管不到这种写法。"""
+    if state.src[state.pos] != "[":
+        return False
+    label_end = state.md.helpers.parseLinkLabel(state, state.pos)
+    match = SPAN_CLASSES.match(state.src, label_end + 1) if label_end >= 0 else None
+    if not match:
+        return False
+    if not silent:
+        end = state.posMax
+        state.pos += 1
+        state.posMax = label_end
+        token = state.push("span_open", "span", 1)
+        token.attrSet("class", " ".join(name[1:] for name in match.group(1).split()))
+        state.md.inline.tokenize(state)
+        state.push("span_close", "span", -1)
+        state.posMax = end
+    state.pos = match.end()
+    return True
+
+
+def enable_custom_markup(md):
+    """自定义模板可以写 ::: job 和 [文字]{.date}，生成带 class 的块和文字，由模板的 CSS 决定样式。"""
+    md.use(container_plugin, name="block", render=render_block,
+           validate=lambda params, *_: bool(BLOCK_CLASSES.fullmatch(params.strip())))
+    md.inline.ruler.after("link", "class_span", class_span)  # 排在链接后面，真正的链接不受影响
+    return md
+
+
 MD = make_markdown()
 MD_REPORT = academic.enable(make_markdown())  # 用学术报告模板时用这个
+MD_CUSTOM = enable_custom_markup(make_markdown())  # 用 extends: none 的模板时用这个
 REPORT_CSS = APP_DIR / "templates" / "report.css"
 TEMPLATE_NAME = re.compile(r"[\w-]+(?: [\w-]+)*")
 NO_TEMPLATE = {"doc_class": "", "show_head": True, "template_css": "", "toc_title": "Table of Contents"}
@@ -605,18 +648,31 @@ def read_template_css(root, template_path, css):
     return template_style.read_css(text, css)
 
 
+def read_pdf_bookmarks(meta, settings, problems):
+    """导出 PDF 时要不要书签。文档写的优先，其次是模板文件，写错的不生效。"""
+    result = True
+    for source in (settings, meta):
+        value = source.get("pdf-bookmarks", result)
+        if isinstance(value, bool):
+            result = value
+        else:
+            problems.append(f'Invalid value for "pdf-bookmarks": {value}. Expected true or false')
+    return result
+
+
 def render_body(meta, body, env, root, rel):
     """按 frontmatter 选的模板渲染正文，返回 (HTML, 给前端的模板信息, 问题)。前端只看模板信息，不需要知道是哪个模板。"""
     base, settings, template_root, template_path, problems = find_template(meta, root, rel)
+    bookmarks = read_pdf_bookmarks(meta, settings, problems)
     if base is None:
-        return MD.render(body, env), NO_TEMPLATE, problems
+        return MD.render(body, env), {**NO_TEMPLATE, "pdf_bookmarks": bookmarks}, problems
     custom_css, css_variables, css_problems = read_template_css(template_root, template_path, settings.get("css"))
     values, variables, style_problems = template_style.read_style([settings.get("style"), meta.get("style")], base, css_variables)
     problems += css_problems + style_problems
     generated_css = template_style.build_css(values, variables, base) + "\n" + custom_css
     if base == "none":
-        info = {**NO_TEMPLATE, "doc_class": template_style.DOC_CLASSES[base], "template_css": generated_css}
-        return MD.render(body, env), info, problems
+        info = {**NO_TEMPLATE, "doc_class": template_style.DOC_CLASSES[base], "template_css": generated_css, "pdf_bookmarks": bookmarks}
+        return MD_CUSTOM.render(body, env), info, problems
     text = template_style.apply_text(academic.text_for(meta.get("lang") or settings.get("lang")), values)
     env["report_text"] = text
     render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
@@ -626,6 +682,7 @@ def render_body(meta, body, env, root, rel):
         "show_head": False,  # 题目、作者和摘要已经在正文的开头
         "template_css": REPORT_CSS.read_text(encoding="utf-8") + "\n" + generated_css,
         "toc_title": text["toc"],
+        "pdf_bookmarks": bookmarks,
     }
     return html, info, problems
 
@@ -689,6 +746,7 @@ def api_pdf(data):
     if browser is None:
         raise ApiError(501, "Chrome or Edge was not found")
     html = html.replace("<head>", "<head>\n" + PDF_SECURITY_POLICY, 1)
+    outline = [] if data.get("bookmarks") is False else ["--generate-pdf-document-outline"]
     with tempfile.TemporaryDirectory(prefix="markdown-editor-pdf-", ignore_cleanup_errors=True) as folder:
         folder = Path(folder)
         source = folder / "document.html"
@@ -698,7 +756,7 @@ def api_pdf(data):
             subprocess.run(
                 [browser, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                  "--disable-extensions", f"--user-data-dir={folder / 'profile'}",
-                 "--no-pdf-header-footer", "--generate-pdf-document-outline", "--virtual-time-budget=10000",
+                 "--no-pdf-header-footer", *outline, "--virtual-time-budget=10000",
                  f"--print-to-pdf={output}", source.as_uri()],
                 capture_output=True, timeout=PDF_TIMEOUT_SECONDS,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,

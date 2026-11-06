@@ -1130,7 +1130,7 @@
           (body.querySelector('.katex') ? '<link rel="stylesheet" href="' + KATEX_CSS + '">\n' : '') +
           '<style>\n' + results[1] + '\n' + results[2] + '\n' + data.template_css + '\n</style>\n</head>\n' +
           '<body class="exported' + (toc ? ' has-toc' : '') + '">\n' + toc + '<article class="doc' + (data.doc_class ? ' ' + data.doc_class : '') + '">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
-        return { html: html, failedImages: failedImages };
+        return { html: html, failedImages: failedImages, pdfBookmarks: data.pdf_bookmarks };
       });
     });
   }
@@ -1188,7 +1188,7 @@
       return fetch('/api/pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html: result.html })
+        body: JSON.stringify({ html: result.html, bookmarks: result.pdfBookmarks })
       }).then(function (response) {
         if (response.ok) {
           return response.blob().then(function (pdf) {
