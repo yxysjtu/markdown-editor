@@ -245,9 +245,9 @@ def replace_references(children, numbering):
     return result
 
 
-def number_report(state):
+def number_document(state):
     tokens = state.tokens
-    text = state.env["report_text"]
+    text = state.env["numbered_text"]
     numbering = Numbering(text)
     render = state.md.renderer.render
     captions = []  # 全部编号之后才能渲染，图题里也可能有引用：(节点, 标签名, 样式, 前缀, 行内内容, 锚点)
@@ -319,7 +319,7 @@ def number_report(state):
                 image, label = figure
                 inline.children = [image]
                 token.tag = tokens[index + 2].tag = "figure"
-                token.attrSet("class", "report-figure")
+                token.attrSet("class", "figure")
                 output += [token, inline]
                 if image.children or label:  # 粘贴的图片没有说明，不编号，也不占图号
                     number, anchor = numbering.next_item("fig", label)
@@ -431,7 +431,7 @@ def number_report(state):
         attribute = f' id="{escape(anchor)}"' if anchor else ""
         body = render(replace_references(children, numbering), state.md.options, state.env).strip()
         gap = text["caption_gap"] if body else ""
-        node.content = (f'<{tag} class="report-caption {css_class}"{attribute}>'
+        node.content = (f'<{tag} class="caption {css_class}"{attribute}>'
                         f'<span class="caption-label">{escape(prefix)}</span>{gap}{body}</{tag}>\n')
 
     def render_inline(children):
@@ -444,14 +444,14 @@ def number_report(state):
             letter = ascii_lowercase[order % len(ascii_lowercase)]
             attribute = f' id="{escape("fig:" + sub_label)}"' if sub_label else ""
             cells.append(f'<figure class="subfigure"{attribute}>{picture}'
-                         f'<figcaption class="report-caption subfigure-caption">{f"({letter}) {render_inline(image.children or [])}".strip()}</figcaption></figure>')
+                         f'<figcaption class="caption subfigure-caption">{f"({letter}) {render_inline(image.children or [])}".strip()}</figcaption></figure>')
         body = render_inline(group["caption"])
         gap = text["caption_gap"] if body else ""
         attribute = f' id="{escape(group["anchor"])}"' if group["anchor"] else ""
         group["node"].content = (
-            f'<figure class="report-figure-group"{attribute} data-line="{group["line"]}" style="--figure-columns: {group["columns"]}">'
+            f'<figure class="figure-group"{attribute} data-line="{group["line"]}" style="--figure-columns: {group["columns"]}">'
             f'<div class="figure-grid">{"".join(cells)}</div>'
-            f'<figcaption class="report-caption figure-caption"><span class="caption-label">{escape(group["prefix"])}</span>{gap}{body}</figcaption>'
+            f'<figcaption class="caption figure-caption"><span class="caption-label">{escape(group["prefix"])}</span>{gap}{body}</figcaption>'
             f'</figure>\n'
         )
     state.tokens = output
@@ -459,8 +459,8 @@ def number_report(state):
 
 def enable(md):
     md.use(container_plugin, name="figures")
-    md.core.ruler.after("block", "report_heading_attrs", read_heading_attrs)
-    md.core.ruler.before("add_line_numbers", "number_report", number_report)
+    md.core.ruler.after("block", "numbered_heading_attrs", read_heading_attrs)
+    md.core.ruler.before("add_line_numbers", "number_document", number_document)
     return md
 
 
@@ -468,23 +468,23 @@ def front_matter_html(meta, text, render_inline):
     """题目、作者、摘要和关键词。"""
     parts = []
     if meta.get("title"):
-        parts.append(f'<div class="report-title">{render_inline(str(meta["title"]))}</div>')
+        parts.append(f'<div class="doc-title">{render_inline(str(meta["title"]))}</div>')
     author = meta.get("author")
     if isinstance(author, list):
         author = "　".join(str(name) for name in author)
-    for value, css_class in ((author, "report-author"), (meta.get("affiliation"), "report-affiliation"),
-                             (str(meta["date"])[:10] if meta.get("date") else None, "report-date")):
+    for value, css_class in ((author, "doc-author"), (meta.get("affiliation"), "doc-affiliation"),
+                             (str(meta["date"])[:10] if meta.get("date") else None, "doc-date")):
         if value:
             parts.append(f'<p class="{css_class}">{render_inline(str(value))}</p>')
     abstract = meta.get("abstract")
     if abstract:
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", str(abstract)) if p.strip()]
         for position, paragraph in enumerate(paragraphs):
-            label = f'<strong class="report-label">{text["abstract"]}</strong>' if position == 0 else ""
-            parts.append(f'<p class="report-abstract">{label}{render_inline(paragraph)}</p>')
+            label = f'<strong class="front-label">{text["abstract"]}</strong>' if position == 0 else ""
+            parts.append(f'<p class="doc-abstract">{label}{render_inline(paragraph)}</p>')
     keywords = meta.get("keywords")
     if keywords:
         words = re.split(r"[,，;；]\s*", keywords) if isinstance(keywords, str) else [str(word) for word in keywords]
         joined = text["keyword_separator"].join(escape(word.strip()) for word in words if word.strip())
-        parts.append(f'<p class="report-keywords"><strong class="report-label">{text["keywords"]}</strong>{joined}</p>')
-    return f'<header class="report-front">{"".join(parts)}</header>\n' if parts else ""
+        parts.append(f'<p class="doc-keywords"><strong class="front-label">{text["keywords"]}</strong>{joined}</p>')
+    return f'<header class="front-matter">{"".join(parts)}</header>\n' if parts else ""

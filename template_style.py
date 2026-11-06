@@ -20,7 +20,7 @@ DEFAULT_PAPER = PAPERS["A4"]
 DEFAULT_MARGIN = (1.8, 1.6, 1.8, 1.6)  # 上右下左，单位是 cm。和 document.css 里普通文档的页边距一样
 NUMBER_SEPARATORS = {"2-1": "-", "2.1": ".", "1": ""}  # 空的表示全文连续编号，不带章号
 
-BASES = {"none": "custom", "numbered": "numbered"}  # 内置的基础 -> 文档的 class
+BASES = {"none": "", "numbered": "numbered"}  # 内置的基础 -> 文档的 class
 
 # 模板 CSS 放在这个选择器里面。写 h1 { } 只影响文档内容，写 body { } 也不会匹配到编辑器界面；
 # 同时优先级够高，能盖过 document.css 里的规则。继承时后面的模板写在后面，优先级相同，所以子模板优先

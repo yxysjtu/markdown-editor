@@ -1,3 +1,4 @@
 __pycache__/
 recent.json
 preferences.json
+tests/.pdf-baseline/

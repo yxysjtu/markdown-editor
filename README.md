@@ -226,7 +226,7 @@ h2 { border-bottom: 1px solid var(--accent); }
 - **选择器**：直接写 `h1`、`p`、`.date`，只影响文档内容，不影响编辑器界面。`&` 表示文档本身。这些规则的优先级比默认样式高，不用加前缀。
 - **变量**：CSS 里写了 `var(--accent)`，`accent` 就是一个可以在 `style` 里设置的选项，这样用模板的人不用碰 CSS。默认值写在模板文件的 `style` 里。值里不能有 `; : { } < >` 和链接，字号可以写 `小四`。CSS 里没用到的名字会提示 `Unknown style option`。名字以 `-size`、`-align`、`-font` 结尾的，会按字号、对齐和字体检查，写错了有提示。
 - **页面**：纸张、边距和页码用 `paper`、`page-margin`、`page-numbers` 设置，CSS 里写 `@page` 不生效。
-- **页头**：`extends: none` 时，默认的题目、日期和标签页头仍然会显示，不想要时可以不写这些字段，或者写 `.doc-head { display: none; }`。基于 `numbered` 时，题目、作者和摘要显示在正文开头，class 是 `report-title`、`report-author` 这些。
+- **页头**：`extends: none` 时，默认的题目、日期和标签页头仍然会显示，不想要时可以不写这些字段，或者写 `.doc-head { display: none; }`。基于 `numbered` 时，题目、作者和摘要显示在正文开头，可以用的 class 见下面的“模板能用的 class”。
 - **基于报告**：写 `extends: report` 再加 `css`，编号、交叉引用和报告的所有选项都保留，CSS 再覆盖外观。子模板的 CSS 写在后面，直接写 `h1` 就能盖过 `report.css`。
 - **加 class**：基于 `none` 的文档还能用下面的两种写法，给内容加上 class，再由 CSS 决定样式：
   - `[文字]{.date}` 生成 `<span class="date">`，比如 `### 公司 [2020 – 至今]{.date}`。写在标题里时，公司和日期可以用 CSS 分到左右两边，但这段文字也会进入 PDF 书签，不想要时写 `pdf-bookmarks: false`。
@@ -234,6 +234,21 @@ h2 { border-bottom: 1px solid var(--accent); }
   - 只能加 class，`{#id}`、`{style=...}` 这些写法不生效，会原样显示。基于 `numbered` 的模板和普通文档不支持这两种写法，也会原样显示。
 - **联网和安全**：CSS 不能加载外部内容，`@import` 和指向网址的 `url()` 都不允许，字体只能用电脑上装的（`@font-face` 里写 `local(...)`），图片只能写 `url(data:...)`。字符串以外不能写反斜杠。文件有这些问题或括号不配对时，整个 CSS 都不用，预览顶部会说明原因。模板 CSS 不能运行脚本，但可以改变文档的显示内容，别人给的模板要留意这一点。
 - **浏览器**：需要 Chrome 或 Edge 120 以上，更旧的版本不认识这种写法，模板 CSS 里的规则不会生效。
+
+### 模板能用的 class
+
+基于 `numbered` 时，这些 class 可以写进模板的 CSS：
+
+| 内容 | class |
+| --- | --- |
+| 题目、作者、单位、日期 | `doc-title`、`doc-author`、`doc-affiliation`、`doc-date` |
+| 摘要、关键词和它们的标签 | `doc-abstract`、`doc-keywords`、`front-label`，它们都在 `front-matter` 里 |
+| 标题前的编号 | `heading-number` |
+| 图、图组、子图 | `figure`、`figure-group`、`figure-grid`、`subfigure` |
+| 所有图题、表题和代码标题 | `caption`，分别还有 `figure-caption`、`table-caption`、`code-caption`、`subfigure-caption`，其中的“图 2-1”是 `caption-label` |
+| 公式和它的编号 | `equation`、`equation-number` |
+| 引用，写错的引用 | `xref`，`xref-missing` |
+| 分页符，很长的代码块 | `page-break`，`code-long` |
 
 ### 模板库
 
@@ -257,6 +272,24 @@ template: resume
 - `none` 和 `numbered` 是内置的，不能覆盖。
 - 写错名字时，预览顶部会列出现在可用的名字。
 - 编辑器目录下的 `templates` 不会被 git 忽略，自己加的模板要提交或者自己备份。
+
+## 测试
+
+改了模板、编号或样式的代码后，运行单元测试，不需要额外安装：
+
+```bash
+python -m unittest discover tests
+```
+
+改了 `templates` 或 `static/document.css` 里的样式时，再比较一下 PDF，看版式有没有意外的变化。它需要本机的 Chrome 或 Edge，还要安装 `pip install pypdfium2 pillow`。改之前先存基准，改完再比较：
+
+```bash
+python tests/compare_pdf.py save
+```
+
+```bash
+python tests/compare_pdf.py compare
+```
 
 ## 修改编辑区的颜色
 

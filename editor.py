@@ -22,7 +22,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-import yaml
 from markdown_it import MarkdownIt
 from mdit_py_plugins.anchors import anchors_plugin
 from mdit_py_plugins.container import container_plugin
@@ -34,8 +33,10 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 
-import academic
+import numbered
+import template_loader
 import template_style
+from paths import MARKDOWN_SUFFIXES, ApiError, content_path, markdown_path, read_markdown, workspace
 
 try:
     from send2trash import TrashPermissionError, send2trash
@@ -54,7 +55,6 @@ STATIC_FILES = {
     "/editor.css": ("editor.css", "text/css; charset=utf-8"),
     "/document.css": ("document.css", "text/css; charset=utf-8"),
 }
-MARKDOWN_SUFFIXES = (".md", ".markdown")
 SKIP_DIRS = {"node_modules", "__pycache__", "venv"}  # 依赖和缓存，里面的 Markdown 不是你写的
 MAX_TREE_ENTRIES = 50000  # 不小心打开整个硬盘时，不至于一直卡住
 MAX_RECENT = 8
@@ -77,49 +77,9 @@ FILE_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox" 
 recent_lock = threading.Lock()
 
 
-class ApiError(Exception):
-    def __init__(self, status, message):
-        super().__init__(message)
-        self.status = status
-        self.message = message
-
-
 CLASS_NAME = r"[^\W\d][\w-]*"
 BLOCK_CLASSES = re.compile(rf"{CLASS_NAME}(?: {CLASS_NAME})*")
 SPAN_CLASSES = re.compile(rf"\{{\s*(\.{CLASS_NAME}(?:\s+\.{CLASS_NAME})*)\s*\}}")
-
-# ---------- 路径 ----------
-def workspace(root):
-    """用户打开的文件夹，必须是绝对路径。"""
-    path = Path(root) if isinstance(root, str) and root else None
-    if path is None or not path.is_absolute():
-        raise ApiError(400, "Enter the full path of a folder")
-    if not path.is_dir():
-        raise ApiError(404, f"Folder not found: {root}")
-    return path.resolve()
-
-
-def content_path(root, rel):
-    """把相对路径转成文件路径，不允许离开打开的文件夹，也不允许碰 .git 这样的隐藏文件。"""
-    base = workspace(root)
-    parts = rel.split("/") if isinstance(rel, str) else []
-    invalid = not parts or "\\" in rel or ":" in rel or any(
-        not part or part.startswith(".") or part.endswith((" ", ".")) for part in parts
-    )
-    if invalid:
-        raise ApiError(400, "Path not allowed")
-    path = (base / rel).resolve()
-    if base not in path.parents:
-        raise ApiError(400, "Path not allowed")
-    return path
-
-
-def markdown_path(root, rel):
-    path = content_path(root, rel)
-    if path.suffix.lower() not in MARKDOWN_SUFFIXES:
-        raise ApiError(400, "Only Markdown files can be edited")
-    return path
-
 
 # ---------- 文件树 ----------
 def natural_key(name):
@@ -268,14 +228,8 @@ def mtime_of(path):
 
 
 def api_read(root, rel):
-    path = markdown_path(root, rel)
-    if not path.is_file():
-        raise ApiError(404, "File not found")
-    try:
-        content = path.read_bytes().decode("utf-8-sig")
-    except UnicodeDecodeError:  # 用错误的编码打开再保存会损坏文件，所以直接拒绝
-        raise ApiError(415, "This file is not UTF-8. Convert its encoding before editing.")
-    return {"path": rel, "content": content.replace("\r\n", "\n"), "mtime": mtime_of(path)}
+    path, content = read_markdown(root, rel)
+    return {"path": rel, "content": content, "mtime": mtime_of(path)}
 
 
 def write_file(path, content):
@@ -524,11 +478,8 @@ def enable_custom_markup(md):
 
 
 MD = make_markdown()
-MD_REPORT = academic.enable(make_markdown())  # 基于 numbered 的模板用这个
+MD_NUMBERED = numbered.enable(make_markdown())  # 基于 numbered 的模板用这个
 MD_CUSTOM = enable_custom_markup(make_markdown())  # 基于 none 的模板用这个
-NUMBERED_CSS = APP_DIR / "templates" / "numbered.css"
-TEMPLATE_NAME = re.compile(r"[\w-]+(?: [\w-]+)*")
-NO_TEMPLATE = {"doc_class": "", "show_head": True, "template_css": "", "toc_title": "Table of Contents"}
 
 
 def parse_tags(value):
@@ -539,20 +490,6 @@ def parse_tags(value):
     if not isinstance(value, list):
         value = [value]
     return [str(t).strip() for t in value if str(t).strip()]
-
-
-def split_frontmatter(source):
-    """返回 (信息, 正文, 警告)。开头两条 --- 之间不是“名称: 值”时，它只是普通的分隔线，不算 frontmatter。"""
-    match = re.match(r"---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", source, re.S)
-    if not match:
-        return {}, source, ""
-    try:
-        meta = yaml.safe_load(match.group(1))
-    except yaml.YAMLError as err:
-        return {}, source[match.end():], f"Invalid frontmatter at the top of the file:\n{err}"
-    if not isinstance(meta, dict):
-        return {}, source, ""
-    return meta, source[match.end():], ""
 
 
 def rewrite_images(html, root, rel):
@@ -567,143 +504,26 @@ def rewrite_images(html, root, rel):
     return re.sub(r'(<img\b[^>]*?\bsrc=")(?![a-zA-Z][a-zA-Z0-9+.-]*:|/|#)([^"]+)"', replace, html)
 
 
-def is_template_file(template):
-    return isinstance(template, str) and (template.startswith(("./", "../")) or template.lower().endswith(".md"))
-
-
-def template_target(rel, path):
-    return posixpath.normpath(posixpath.join(posixpath.dirname(rel), path))
-
-
-def find_library_template(root, name, seen):
-    """按名字找模板：先找打开的文件夹下的 templates，再找编辑器自带的 templates。返回 (所在的文件夹, 相对路径)。
-    已经用过的文件要跳过，这样打开的文件夹里的 report.md 可以写 extends: report，继承编辑器自带的那个。"""
-    if isinstance(name, str) and TEMPLATE_NAME.fullmatch(name):
-        target = f"templates/{name}.md"
-        for folder in (root, str(APP_DIR)):
-            if (folder, target) not in seen and markdown_path(folder, target).is_file():
-                return folder, target
-    return None, None
-
-
-def template_names(root):
-    names = {"numbered"}
-    for folder in (Path(root), APP_DIR):
-        names.update(path.stem for path in (folder / "templates").glob("*.md") if TEMPLATE_NAME.fullmatch(path.stem))
-    return ", ".join(sorted(names))
-
-
-def read_template_file(root, target, template):
-    """读模板文件，template 是文档里写的内容，用在提示里。返回 (它的 frontmatter, 问题)。"""
-    try:
-        content = api_read(root, target)["content"]
-    except ApiError as err:  # 打开的文件夹以外的路径也会到这里
-        return {}, f'Cannot read template file "{template}": {err.message}. It must be a UTF-8 Markdown file.'
-    meta, _, problem = split_frontmatter(content)
-    if problem:
-        return {}, f'Template file "{template}": {problem}'
-    if not meta.get("extends"):
-        return {}, f'Template file "{template}" must have "extends" at the top: numbered, none or another template.'
-    return meta, ""
-
-
-def find_template(meta, root, rel):
-    """frontmatter 选的模板，顺着 extends 一直找到内置的基础。
-    返回 (基础, 模板列表, 问题)。基础是 numbered 或 none，有问题或没有模板时是 None。模板从最上层排到最下层，后面的优先。"""
-    spec = meta.get("template")
-    folder, path = root, rel
-    chain = []
-    if not spec:  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果。它的 style 就是文档的 style
-        spec = meta.get("extends")
-        if not spec:
-            return None, [], []
-        chain.append({"settings": {"css": meta.get("css")}, "folder": root, "path": rel})
-    seen = {(root, rel)}
-    while not (isinstance(spec, str) and spec in template_style.BASES):
-        if is_template_file(spec):
-            target = template_target(path, spec)
-        else:
-            folder, target = find_library_template(root, spec, seen)
-            if target is None:
-                return None, [], [f'Unknown template "{spec}". Available templates: {template_names(root)}. '
-                                  'Or use the path of a template file like ./my-template.md']
-        if (folder, target) in seen:
-            return None, [], [f'Template "{spec}" extends itself.']
-        seen.add((folder, target))
-        settings, problem = read_template_file(folder, target, spec)
-        if problem:
-            return None, [], [problem]
-        chain.insert(0, {"settings": settings, "folder": folder, "path": target})
-        path = target
-        spec = settings["extends"]
-    return spec, chain, []
-
-
-def read_template_css(root, template_path, css):
-    """模板写的 css: ./x.css，路径相对于模板文件。返回 (样式, 用到的变量名, 问题)。"""
-    if not css:
-        return "", set(), []
-    try:
-        if not isinstance(css, str) or not css.lower().endswith(".css"):
-            raise ApiError(400, "Only .css files can be used")
-        path = content_path(root, template_target(template_path, css))
-        if not path.is_file():
-            raise ApiError(404, "File not found")
-        text = path.read_bytes().decode("utf-8-sig")
-    except (ApiError, UnicodeDecodeError) as err:
-        reason = err.message if isinstance(err, ApiError) else "The file is not UTF-8"
-        return "", set(), [f'Cannot read template CSS "{css}": {reason}.']
-    return template_style.read_css(text, css)
-
-
-def read_pdf_bookmarks(sources, problems):
-    """导出 PDF 时要不要书签。sources 从模板到文档排列，后面的优先，写错的不生效。"""
-    result = True
-    for source in sources:
-        value = source.get("pdf-bookmarks", result)
-        if isinstance(value, bool):
-            result = value
-        else:
-            problems.append(f'Invalid value for "pdf-bookmarks": {value}. Expected true or false')
-    return result
-
-
 def render_body(meta, body, env, root, rel):
     """按 frontmatter 选的模板渲染正文，返回 (HTML, 给前端的模板信息, 问题)。前端只看模板信息，不需要知道是哪个模板。"""
-    base, chain, problems = find_template(meta, root, rel)
-    layers = [template["settings"] for template in chain]
-    bookmarks = read_pdf_bookmarks(layers + [meta], problems)
-    if base is None:
-        return MD.render(body, env), {**NO_TEMPLATE, "pdf_bookmarks": bookmarks}, problems
-    css_parts = []
-    css_variables = set()
-    if base == "numbered":
-        css_parts.append(template_style.read_css(NUMBERED_CSS.read_text(encoding="utf-8"), NUMBERED_CSS.name)[0])
-    for template in chain:
-        css, names, css_problems = read_template_css(template["folder"], template["path"], template["settings"].get("css"))
-        css_parts.append(css)
-        css_variables |= names
-        problems += css_problems
-    values, variables, style_problems = template_style.read_style([layer.get("style") for layer in layers] + [meta.get("style")], base, css_variables)
-    problems += style_problems
-    doc_class = template_style.BASES[base] + (" paged" if template_style.is_paged(values) else "")
-    template_css = "\n".join([template_style.build_css(values, variables)] + css_parts)
-    if base == "none":
-        info = {**NO_TEMPLATE, "doc_class": doc_class, "template_css": template_css, "pdf_bookmarks": bookmarks}
-        return MD_CUSTOM.render(body, env), info, problems
-    lang = meta.get("lang") or next((layer["lang"] for layer in reversed(layers) if layer.get("lang")), None)
-    text = template_style.apply_text(academic.text_for(lang), values)
-    env["report_text"] = text
-    render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
-    html = academic.front_matter_html(meta, text, render_inline) + MD_REPORT.render(academic.prepare_source(body), env)
+    template = template_loader.load_template(meta, root, rel)
     info = {
-        "doc_class": doc_class,
-        "show_head": False,  # 题目、作者和摘要已经在正文的开头
-        "template_css": template_css,
-        "toc_title": text["toc"],
-        "pdf_bookmarks": bookmarks,
+        "doc_class": template["doc_class"],
+        "show_head": template["base"] != "numbered",  # numbered 的题目、作者和摘要在正文的开头
+        "template_css": template["css"],
+        "toc_title": "Table of Contents",
+        "pdf_bookmarks": template["pdf_bookmarks"],
     }
-    return html, info, problems
+    if template["base"] is None:
+        return MD.render(body, env), info, template["problems"]
+    if template["base"] == "none":
+        return MD_CUSTOM.render(body, env), info, template["problems"]
+    text = template_style.apply_text(numbered.text_for(template["lang"]), template["values"])
+    env["numbered_text"] = text
+    info["toc_title"] = text["toc"]
+    render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
+    html = numbered.front_matter_html(meta, text, render_inline) + MD_NUMBERED.render(numbered.prepare_source(body), env)
+    return html, info, template["problems"]
 
 
 def api_render(data):
@@ -711,7 +531,7 @@ def api_render(data):
     rel = data.get("path")
     markdown_path(root, rel)
     source = data.get("content") or ""
-    meta, body, warning = split_frontmatter(source)
+    meta, body, warning = template_loader.split_frontmatter(source)
     env = {"line_offset": source.count("\n") - body.count("\n")}
     html, template_info, problems = render_body(meta, body, env, root, rel)
     if warning:
