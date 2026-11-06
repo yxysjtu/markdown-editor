@@ -484,6 +484,7 @@ def make_markdown():
 MD = make_markdown()
 MD_REPORT = academic.enable(make_markdown())  # 用学术报告模板时用这个
 REPORT_CSS = APP_DIR / "templates" / "report.css"
+TEMPLATE_NAME = re.compile(r"[\w-]+(?: [\w-]+)*")
 NO_TEMPLATE = {"doc_class": "", "show_head": True, "template_css": "", "toc_title": "Table of Contents"}
 
 
@@ -531,13 +532,29 @@ def template_target(rel, path):
     return posixpath.normpath(posixpath.join(posixpath.dirname(rel), path))
 
 
-def read_template_file(root, rel, template):
-    """template: ./my-school.md 指向的文件，路径相对于当前文件。返回 (它的 frontmatter, 问题)。"""
-    target = template_target(rel, template)
+def find_library_template(root, name):
+    """按名字找模板：先找打开的文件夹下的 templates，再找编辑器自带的 templates。返回 (所在的文件夹, 相对路径)。"""
+    if isinstance(name, str) and TEMPLATE_NAME.fullmatch(name):
+        target = f"templates/{name}.md"
+        for folder in (root, str(APP_DIR)):
+            if markdown_path(folder, target).is_file():
+                return folder, target
+    return None, None
+
+
+def template_names(root):
+    names = {"report"}
+    for folder in (Path(root), APP_DIR):
+        names.update(path.stem for path in (folder / "templates").glob("*.md") if TEMPLATE_NAME.fullmatch(path.stem))
+    return ", ".join(sorted(names))
+
+
+def read_template_file(root, target, template):
+    """读模板文件，template 是文档里写的内容，用在提示里。返回 (它的 frontmatter, 问题)。"""
     try:
         content = api_read(root, target)["content"]
     except ApiError as err:  # 打开的文件夹以外的路径也会到这里
-        return {}, f'Cannot read template file "{template}": {err.message}. It must be a UTF-8 Markdown file inside the open folder.'
+        return {}, f'Cannot read template file "{template}": {err.message}. It must be a UTF-8 Markdown file.'
     meta, _, problem = split_frontmatter(content)
     if problem:
         return {}, f'Template file "{template}": {problem}'
@@ -547,23 +564,28 @@ def read_template_file(root, rel, template):
 
 
 def find_template(meta, root, rel):
-    """frontmatter 选的模板。返回 (基础, 模板的设置, 模板文件的路径, 问题)。基础是 report 或 none，没有模板时是 None。"""
+    """frontmatter 选的模板。返回 (基础, 模板的设置, 模板所在的文件夹, 模板文件的相对路径, 问题)。基础是 report 或 none，没有模板时是 None。"""
     template = meta.get("template")
     if not template:  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果。它的 style 就是文档的 style
         extends = meta.get("extends")
         if not extends:
-            return None, {}, rel, []
+            return None, {}, root, rel, []
         if extends not in template_style.DOC_CLASSES:
-            return None, {}, rel, [f'"extends" must be report or none, not "{extends}"']
-        return extends, {"css": meta.get("css")}, rel, []
-    if template == "report":
-        return "report", {}, rel, []
-    if not is_template_file(template):
-        return None, {}, rel, [f'Unknown template "{template}". Use "report", or the path of a template file like ./my-template.md']
-    settings, problem = read_template_file(root, rel, template)
+            return None, {}, root, rel, [f'"extends" must be report or none, not "{extends}"']
+        return extends, {"css": meta.get("css")}, root, rel, []
+    if template == "report":  # 这个名字留给内置报告，templates 文件夹里的同名文件不会覆盖它
+        return "report", {}, root, rel, []
+    if is_template_file(template):
+        folder, target = root, template_target(rel, template)
+    else:
+        folder, target = find_library_template(root, template)
+        if target is None:
+            return None, {}, root, rel, [f'Unknown template "{template}". Available templates: {template_names(root)}. '
+                                         'Or use the path of a template file like ./my-template.md']
+    settings, problem = read_template_file(folder, target, template)
     if problem:
-        return None, {}, rel, [problem]
-    return settings["extends"], settings, template_target(rel, template), []
+        return None, {}, root, rel, [problem]
+    return settings["extends"], settings, folder, target, []
 
 
 def read_template_css(root, template_path, css):
@@ -579,16 +601,16 @@ def read_template_css(root, template_path, css):
         text = path.read_bytes().decode("utf-8-sig")
     except (ApiError, UnicodeDecodeError) as err:
         reason = err.message if isinstance(err, ApiError) else "The file is not UTF-8"
-        return "", set(), [f'Cannot read template CSS "{css}": {reason}. It must be a UTF-8 .css file inside the open folder.']
+        return "", set(), [f'Cannot read template CSS "{css}": {reason}.']
     return template_style.read_css(text, css)
 
 
 def render_body(meta, body, env, root, rel):
     """按 frontmatter 选的模板渲染正文，返回 (HTML, 给前端的模板信息, 问题)。前端只看模板信息，不需要知道是哪个模板。"""
-    base, settings, template_path, problems = find_template(meta, root, rel)
+    base, settings, template_root, template_path, problems = find_template(meta, root, rel)
     if base is None:
         return MD.render(body, env), NO_TEMPLATE, problems
-    custom_css, css_variables, css_problems = read_template_css(root, template_path, settings.get("css"))
+    custom_css, css_variables, css_problems = read_template_css(template_root, template_path, settings.get("css"))
     values, variables, style_problems = template_style.read_style([settings.get("style"), meta.get("style")], base, css_variables)
     problems += css_problems + style_problems
     generated_css = template_style.build_css(values, variables, base) + "\n" + custom_css

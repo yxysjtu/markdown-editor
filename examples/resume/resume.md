@@ -1,5 +1,5 @@
 ---
-template: ./template.md
+template: resume
 style:
   accent: "#26a269"
 ---
