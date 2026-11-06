@@ -910,7 +910,7 @@
       }
       renderTree(data.tree, tree);
       tree.querySelectorAll('details').forEach(function (d) {
-        d.open = hasPrevious ? !!open[d.dataset.path] : true; // 刚打开文件夹时全部展开
+        d.open = hasPrevious ? !!open[d.dataset.path] : false; // 刚打开文件夹时全部展开
       });
       markActive();
       return data;

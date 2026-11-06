@@ -103,8 +103,8 @@ def scan_folder(folder, base, budget):
         rel = Path(entry.path).relative_to(base).as_posix()
         if entry.is_dir():
             sub = scan_folder(entry.path, base, budget)
-            if sub or is_empty_dir(entry.path):
-                children.append({"name": entry.name, "path": rel, "children": sub})
+            # if sub or is_empty_dir(entry.path):
+            children.append({"name": entry.name, "path": rel, "children": sub})
         elif entry.name.lower().endswith(MARKDOWN_SUFFIXES):
             children.append({"name": entry.name, "path": rel})
     return children
