@@ -40,14 +40,15 @@ GROUP_LABEL = re.compile(r"#fig:(" + LABEL + r")")
 GROUP_COLUMNS = re.compile(r"\bcols=(\d+)")
 DEFAULT_GROUP_COLUMNS = 2
 MAX_GROUP_COLUMNS = 6
+LONG_CODE_LINES = 30  # 超过这个行数的代码，打印时直接从当前位置开始排，不整块移到下一页，否则前一页会大片留白
 
 TEXT = {
     "zh": {"fig": "图 {}", "tbl": "表 {}", "eq": "式 ({})", "lst": "代码 {}", "chapter": "第 {} 章", "section": "第 {} 节",
            "abstract": "摘要：", "keywords": "关键词：", "keyword_separator": "；", "caption_gap": "　",
-           "page_break": "分页符", "appendix": "附录 {}"},
+           "page_break": "分页符", "appendix": "附录 {}", "toc": "目录"},
     "en": {"fig": "Figure {}", "tbl": "Table {}", "eq": "Eq. ({})", "lst": "Listing {}", "chapter": "Section {}", "section": "Section {}",
            "abstract": "Abstract: ", "keywords": "Keywords: ", "keyword_separator": "; ", "caption_gap": ". ",
-           "page_break": "Page break", "appendix": "Appendix {}"},
+           "page_break": "Page break", "appendix": "Appendix {}", "toc": "Contents"},
 }
 # 这些标题按惯例不编号，不用每次都写 {-}
 UNNUMBERED_TITLES = {"摘要", "abstract", "目录", "contents", "参考文献", "references", "致谢",
@@ -335,6 +336,10 @@ def number_report(state):
                 caption = html_block()
                 captions.append((caption, "p", "code-caption", text["lst"].format(number), [caption_text], anchor))
                 output.append(caption)
+            if token.content.count("\n") > LONG_CODE_LINES:
+                output += [html_block('<div class="code-long">\n'), token, html_block("</div>\n")]
+                index += 1
+                continue
 
         elif token.type == "container_figures_open":
             end = index + 1

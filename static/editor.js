@@ -1073,7 +1073,7 @@
   }
 
   // 导出文件的目录，只用链接和 details，不需要脚本。标题太少时不需要目录
-  function exportTocHtml(body) {
+  function exportTocList(body) {
     var headings = Array.prototype.filter.call(body.querySelectorAll('h1, h2, h3'), function (heading) { return heading.id; });
     if (headings.length < TOC_MIN_HEADINGS) return '';
     var top = Math.min.apply(null, headings.map(function (h) { return +h.tagName.charAt(1); }));
@@ -1087,11 +1087,11 @@
       item.appendChild(link);
       list.appendChild(item);
     });
-    return '<details class="export-toc" open><summary>Table of Contents</summary>' + list.outerHTML + '</details>\n';
+    return list.outerHTML;
   }
 
   // 生成独立的 HTML：内容是当前编辑器里的（包括还没保存的改动），样式都写在文件里
-  function buildExportHtml(path, content) {
+  function buildExportHtml(path, content, forPdf) {
     return Promise.all([
       request('/api/render', { root: root, path: path, content: content }),
       fetch('/document.css').then(function (r) { return r.text(); }),
@@ -1099,7 +1099,7 @@
     ]).then(function (results) {
       var data = results[0];
       var body = document.createElement('div');
-      body.innerHTML = data.html;
+      body.innerHTML = sanitizeHtml(data.html);
       body.querySelectorAll('[data-line]').forEach(function (el) { el.removeAttribute('data-line'); });
       if (window.renderMathInElement) {
         renderMathInElement(body, {
@@ -1112,9 +1112,14 @@
       }
       return embedImages(body).then(function (failedImages) {
         var title = data.title || fileStem(path);
-        var toc = exportTocHtml(body);
+        var tocList = exportTocList(body);
+        var toc = tocList ? '<details class="export-toc" open><summary>' + escapeHtml(data.toc_title) + '</summary>' + tocList + '</details>\n' : '';
+        if (forPdf) { // PDF 的书签来自标题，只保留三级
+          body.querySelectorAll('h4, h5, h6').forEach(function (heading) { heading.setAttribute('role', 'paragraph'); });
+        }
+        var isReport = data.template === 'report'; // 学术报告的题目和作者已经在正文开头
         var head = '';
-        if (data.title || data.date || data.tags.length) {
+        if (!isReport && (data.title || data.date || data.tags.length)) {
           head = '<header class="doc-head">' + (data.title ? '<h1>' + escapeHtml(data.title) + '</h1>' : '') +
             '<div class="doc-meta">' + (data.date ? '<time>' + escapeHtml(data.date) + '</time>' : '') +
             '<div class="tags">' + data.tags.map(function (tag) { return '<span class="tag">' + escapeHtml(tag) + '</span>'; }).join('') + '</div>' +
@@ -1125,7 +1130,7 @@
           '<title>' + escapeHtml(title) + '</title>\n' +
           (body.querySelector('.katex') ? '<link rel="stylesheet" href="' + KATEX_CSS + '">\n' : '') +
           '<style>\n' + results[1] + '\n' + results[2] + '\n</style>\n</head>\n' +
-          '<body class="exported' + (toc ? ' has-toc' : '') + '">\n' + toc + '<article class="doc">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
+          '<body class="exported' + (toc ? ' has-toc' : '') + '">\n' + toc + '<article class="doc' + (isReport ? ' academic' : '') + '">\n' + head + '<div class="prose">' + body.innerHTML + '</div>\n</article>\n</body>\n</html>\n';
         return { html: html, failedImages: failedImages };
       });
     });
@@ -1174,15 +1179,30 @@
       return;
     }
     keepStatus('Preparing export…');
-    buildExportHtml(path, content).then(function (result) {
+    buildExportHtml(path, content, format === 'pdf').then(function (result) {
       var note = result.failedImages ? ' (' + result.failedImages + ' image(s) could not be embedded)' : '';
       if (format === 'html') {
         download(stem + '.html', result.html, 'text/html;charset=utf-8');
         showStatus('Exported ' + stem + '.html' + note, !!result.failedImages);
         return null;
       }
-      showStatus('Choose “Save as PDF” in the print dialog' + note, !!result.failedImages);
-      return printHtml(result.html, stem);
+      return fetch('/api/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: result.html })
+      }).then(function (response) {
+        if (response.ok) {
+          return response.blob().then(function (pdf) {
+            download(stem + '.pdf', pdf, 'application/pdf');
+            showStatus('Exported ' + stem + '.pdf' + note, !!result.failedImages);
+          });
+        }
+        if (response.status === 501) { // 没有 Chrome 或 Edge，退回打印窗口。这样生成的 PDF 没有书签
+          showStatus('Choose “Save as PDF” in the print dialog' + note, !!result.failedImages);
+          return printHtml(result.html, stem);
+        }
+        return response.json().then(function (body) { throw new Error(body.error || 'Request failed'); });
+      });
     }).catch(function (err) {
       showStatus('Could not export: ' + err.message, true);
     });
@@ -1344,6 +1364,31 @@
     return saving;
   }
 
+  // ---------- 清理内容 ----------
+  // Markdown 可以直接写 HTML，别人给的文件里可能藏着脚本，所以显示和导出之前都要清理
+  var REMOVED_TAGS = 'script, object, embed, applet, base, meta, link, set, animate, animatetransform, animatemotion';
+  var URL_ATTRIBUTES = ['href', 'xlink:href', 'src', 'action', 'formaction', 'data', 'poster', 'background', 'ping'];
+
+  function isSafeUrl(tag, attribute, value) {
+    var url = value.replace(/[\u0000-\u0020]+/g, '').toLowerCase(); // 浏览器会忽略这些字符，比如 java\nscript:
+    if (url.indexOf('data:') === 0) return tag === 'IMG' && attribute === 'src' && url.indexOf('data:image/') === 0;
+    return !/^[a-z][a-z0-9+.-]*:/.test(url) || /^(https?|mailto|tel):/.test(url);
+  }
+
+  function sanitizeHtml(html) {
+    var doc = new DOMParser().parseFromString('<!DOCTYPE html><body>' + html, 'text/html'); // 这样解析不会运行脚本，也不会加载图片
+    doc.body.querySelectorAll(REMOVED_TAGS).forEach(function (el) { el.remove(); });
+    doc.body.querySelectorAll('*').forEach(function (el) {
+      Array.prototype.slice.call(el.attributes).forEach(function (attribute) {
+        var name = attribute.name.toLowerCase();
+        var unsafe = name.indexOf('on') === 0 || name === 'srcdoc' ||
+          (URL_ATTRIBUTES.indexOf(name) !== -1 && !isSafeUrl(el.tagName, name, attribute.value));
+        if (unsafe) el.removeAttribute(attribute.name);
+      });
+    });
+    return doc.body.innerHTML;
+  }
+
   // ---------- 预览 ----------
   function renderPreview() {
     if (!current) return;
@@ -1366,7 +1411,7 @@
         el.textContent = tag;
         tags.appendChild(el);
       });
-      previewBody.innerHTML = data.html;
+      previewBody.innerHTML = sanitizeHtml(data.html);
       if (window.renderMathInElement) {
         renderMathInElement(previewBody, {
           delimiters: [

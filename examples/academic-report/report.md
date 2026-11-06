@@ -75,8 +75,6 @@ def attention(q, k, v, mask=None):
     return score.softmax(dim=-1) @ v
 ```
 
-下一章从新的一页开始：
-
 \newpage
 
 # 实验结果 {#sec:experiment}

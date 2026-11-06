@@ -62,7 +62,7 @@ body.exported.has-toc .doc { padding-left: 0; padding-right: 0; }
 
 /* 打印和 PDF：纸上不能左右滚动，长内容要换行；保留代码块和表头的底色 */
 @media print {
-  @page { margin: 18mm 16mm; }
+  @page { size: A4; margin: 18mm 16mm; }
   body { background: #fff; font-size: 12pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body.exported .doc { max-width: none; padding: 0; }
   body.exported.has-toc { padding: 0; }
@@ -151,7 +151,7 @@ body.exported.has-toc .doc { padding-left: 0; padding-right: 0; }
 
 /* 代码和脚注。代码的标题和表题一样在上方，不和代码分在两页 */
 .academic .prose .code-caption { margin: 1em 0 .4em; break-after: avoid; }
-.academic .prose .code-caption + pre { margin-top: 0; }
+.academic .prose .code-caption + pre, .academic .prose .code-caption + .code-long pre { margin-top: 0; }
 .academic .prose code { padding: 0; background: none; font: 10.5pt/1.4 Consolas, Menlo, "Courier New", monospace; }
 .academic .prose pre { margin: .8em 0; padding: 6pt 8pt; border: .75pt solid #999; border-radius: 0; background: none; line-height: 1.3; }
 .academic .prose pre code { font-size: 9pt; }
@@ -165,4 +165,34 @@ body.exported.has-toc .doc { padding-left: 0; padding-right: 0; }
 .preview-pane .doc.academic { max-width: 21cm; min-height: 29.7cm; padding: 2.54cm min(15.1%, 3.17cm); background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .18); }
 @container (max-width: 620px) {
   .preview-pane .doc.academic { padding: 32px 20px; }
+}
+
+/* 学术报告导出的 HTML：在屏幕上也像一张 A4 纸 */
+@media screen {
+  body.exported:has(.doc.academic) { background: #e8e8e8; }
+  body.exported .doc.academic { max-width: 21cm; margin: 24px auto; padding: 2.54cm 3.17cm; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .18); }
+}
+
+/* 学术报告打印和导出 PDF：A4，页码在页面底部居中。用命名页面，不影响普通文档的打印 */
+@page report {
+  size: A4;
+  margin: 2.54cm 3.17cm;
+  @bottom-center { content: counter(page); font: 10.5pt "Times New Roman", serif; }
+  /* 这些位置写空内容，Chrome 就不会再画自带的日期、标题和网址 */
+  @top-left { content: ""; }
+  @top-center { content: ""; }
+  @top-right { content: ""; }
+  @bottom-left { content: ""; }
+  @bottom-right { content: ""; }
+}
+@media print {
+  body:has(.doc.academic) { background: #fff; }
+  body.exported .doc.academic { page: report; max-width: none; margin: 0; padding: 0; background: none; box-shadow: none; }
+  .academic .prose p { orphans: 2; widows: 2; }
+  .academic .report-figure, .academic .report-figure-group, .academic .equation { break-inside: avoid; }
+  .academic .prose .table-caption, .academic .prose .code-caption { break-after: avoid; }
+  .academic .prose a[href^="http"] { color: inherit; }
+  /* 贴着版心边缘时，边框会被页面裁掉。短代码整块放到一页；太长只能跨页时，每一页的框各自闭合 */
+  .academic .prose pre { margin-left: 1px; margin-right: 1px; break-inside: avoid; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .academic .prose .code-long pre { break-inside: auto; }
 }

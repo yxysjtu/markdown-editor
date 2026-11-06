@@ -12,8 +12,10 @@ import mimetypes
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -57,6 +59,18 @@ MAX_RECENT = 8
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
 CODE_CSS = HtmlFormatter(style="default").get_style_defs("pre")
+CDN_CODEMIRROR = "https://cdn.jsdelivr.net/npm/codemirror@5.65.16/"
+CDN_KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/"
+# 第二道防线：就算清理漏了，也不能运行内联脚本，脚本只能来自这些地址，也不能向其他网站发请求
+PAGE_SECURITY_POLICY = (
+    "default-src 'none'; "
+    f"script-src 'self' {CDN_CODEMIRROR} {CDN_KATEX}; "
+    f"style-src 'self' 'unsafe-inline' {CDN_CODEMIRROR} {CDN_KATEX}; "
+    f"font-src {CDN_KATEX} data:; "
+    "img-src * data: blob:; connect-src 'self'; frame-src https:; "
+    "base-uri 'none'; form-action 'none'; object-src 'none'"
+)
+FILE_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox"  # 直接打开 SVG 时，里面的脚本不能运行
 
 recent_lock = threading.Lock()
 
@@ -531,7 +545,67 @@ def api_render(data):
         "html": rewrite_images(html, root, rel),
         "warning": warning,
         "template": "report" if template == "report" else "",
+        "toc_title": academic.text_for(meta)["toc"] if template == "report" else "Table of Contents",
     }
+
+
+# ---------- 导出 PDF ----------
+BROWSER_PATHS = [
+    r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+    r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+    r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
+    r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+    r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+]
+BROWSER_COMMANDS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]
+PDF_TIMEOUT_SECONDS = 120
+# Markdown 里可能带脚本，这个文件又是在本机直接打开的，所以不允许运行脚本，也不允许发请求
+PDF_SECURITY_POLICY = ("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+                       "style-src 'unsafe-inline' https:; font-src https: data:; img-src https: http: data:\">")
+
+
+def find_browser():
+    for candidate in BROWSER_PATHS:
+        path = os.path.expandvars(candidate)
+        if os.path.isfile(path):
+            return path
+    for command in BROWSER_COMMANDS:
+        path = shutil.which(command)
+        if path:
+            return path
+    return None
+
+
+def api_pdf(data):
+    """用本机的 Chrome 或 Edge 把导出的 HTML 转成 PDF。打印窗口生成不了书签，所以不走打印窗口。"""
+    html = data.get("html")
+    if not isinstance(html, str) or "<head>" not in html:
+        raise ApiError(400, "Missing content")
+    browser = find_browser()
+    if browser is None:
+        raise ApiError(501, "Chrome or Edge was not found")
+    html = html.replace("<head>", "<head>\n" + PDF_SECURITY_POLICY, 1)
+    with tempfile.TemporaryDirectory(prefix="markdown-editor-pdf-", ignore_cleanup_errors=True) as folder:
+        folder = Path(folder)
+        source = folder / "document.html"
+        output = folder / "document.pdf"
+        source.write_text(html, encoding="utf-8")
+        try:
+            subprocess.run(
+                [browser, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+                 "--disable-extensions", f"--user-data-dir={folder / 'profile'}",
+                 "--no-pdf-header-footer", "--generate-pdf-document-outline", "--virtual-time-budget=10000",
+                 f"--print-to-pdf={output}", source.as_uri()],
+                capture_output=True, timeout=PDF_TIMEOUT_SECONDS,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+        except subprocess.TimeoutExpired:
+            raise ApiError(504, "Creating the PDF took too long")
+        if not output.is_file():
+            raise ApiError(500, "The browser could not create the PDF")
+        return output.read_bytes()
 
 
 # ---------- 服务 ----------
@@ -539,9 +613,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def send_body(self, status, body, content_type):
+    def send_body(self, status, body, content_type, security_policy=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if security_policy:
+            self.send_header("Content-Security-Policy", security_policy)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -586,7 +663,7 @@ class Handler(BaseHTTPRequestHandler):
         query = {key: values[0] for key, values in parse_qs(url.query).items()}
         if url.path in STATIC_FILES:
             name, content_type = STATIC_FILES[url.path]
-            self.send_body(200, (STATIC_DIR / name).read_bytes(), content_type)
+            self.send_body(200, (STATIC_DIR / name).read_bytes(), content_type, PAGE_SECURITY_POLICY)
         elif url.path == "/code.css":
             self.send_body(200, CODE_CSS.encode("utf-8"), "text/css; charset=utf-8")
         elif url.path == "/api/recent":
@@ -606,7 +683,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(403, "Only images can be read")
             if not path.is_file():
                 raise ApiError(404, "File not found")
-            self.send_body(200, path.read_bytes(), content_type)
+            self.send_body(200, path.read_bytes(), content_type, FILE_SECURITY_POLICY)
         else:
             raise ApiError(404, "Page not found")
 
@@ -621,6 +698,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/api/pick-folder":
             self.send_json(200, api_pick_folder())
+            return
+        if path == "/api/pdf":
+            self.send_body(200, api_pdf(data), "application/pdf")
             return
         routes = {
             "/api/save": api_save,
