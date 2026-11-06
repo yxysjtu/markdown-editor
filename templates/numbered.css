@@ -1,0 +1,35 @@
+/* 内置 numbered 的基础版式：图组、公式编号、分页符和引用要靠这些规则才能正常显示。字体、字号这些外观由模板决定，比如 report.css */
+
+/* 图 */
+.report-figure { margin: 1em 0; text-align: center; text-indent: 0; }
+.report-figure img { display: block; max-width: 100%; margin: 0 auto; }
+
+/* 图组：每行等宽，子图的图片和子标题各自按行对齐，整组不跨页 */
+.report-figure-group { margin: 1em 0; text-align: center; break-inside: avoid; }
+.figure-grid { display: grid; grid-template-columns: repeat(var(--figure-columns), minmax(0, 1fr)); gap: .3em 1em; }
+.subfigure { display: grid; grid-row: span 2; grid-template-rows: subgrid; align-items: center; margin: 0; min-width: 0; }
+.subfigure img { display: block; width: 100%; height: auto; max-width: 100%; margin: 0 auto; }
+
+/* 分页符：预览时显示一条虚线，打印时才真正分页 */
+.page-break { position: relative; margin: 1.5em 0; border-top: 1px dashed #999; }
+.page-break::after { content: attr(data-label); position: absolute; top: -.75em; left: 50%; padding: 0 .6em; background: #fff; color: #888; font-size: 9pt; transform: translateX(-50%); }
+@media print {
+  .page-break { margin: 0; border: 0; break-after: page; }
+  .page-break::after { content: none; }
+}
+
+/* 公式：居中，编号靠右 */
+.equation { position: relative; display: flex; align-items: center; justify-content: center; margin: .6em 0; padding: 0 3.5em; }
+.equation .math-display { overflow: visible; } /* KaTeX 的下标会超出几像素，打印时也不能有滚动条 */
+.equation .katex-display { margin: 0; }
+.equation-number { position: absolute; right: 0; }
+
+/* 引用 */
+.xref { white-space: nowrap; }
+.xref:hover { text-decoration: underline; }
+.xref-missing { color: #c0392b; font-weight: 700; }
+
+@media print {
+  .report-figure, .report-figure-group, .equation { break-inside: avoid; }
+  .table-caption, .code-caption { break-after: avoid; }
+}

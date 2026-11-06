@@ -44,7 +44,7 @@ bash start.sh "C:/Users/me/notes"
 
 ## 学术报告模板
 
-在文件开头写 `template: report`，预览就会变成毕业论文和学术报告的版式，并自动给标题、图、表、公式编号。其他文件不受影响。字体、字号、编号格式等都可以改，见后面的“自定义样式”。例子在 `examples/academic-report` 里，打开这个文件夹就能看到效果。
+在文件开头写 `template: report`，预览就会变成毕业论文和学术报告的版式，并自动给标题、图、表、公式编号。其他文件不受影响。字体、字号、编号格式等都可以改，见后面的“自定义样式”。它是一个普通的模板，就是 `templates/report.md` 和 `report.css`，编号和交叉引用来自内置的 `numbered`。例子在 `examples/academic-report` 里，打开这个文件夹就能看到效果。
 
 ```markdown
 ---
@@ -107,7 +107,7 @@ $$ {#eq:energy}
 
 工具栏的导出按钮选 PDF，会直接下载这个版式的 PDF，带页码。30 行以内的代码块尽量整块放在一页，更长的会跨页，每页的框各自闭合。`\newpage` 总是强制换页，如果前面的内容刚好跨到新的一页，那一页后面就会留白。PDF 阅读器的侧边栏里有书签目录，显示一到三级标题，点击可以跳转。脚注目前显示在文章末尾，不在每页底部。
 
-默认版式：A4，边距上下 2.54cm、左右 3.17cm；正文宋体小四（英文 Times New Roman），1.5 倍行距，首行缩进两字；题目黑体二号，一、二、三级标题黑体三号、四号、小四；图题、表题和表格五号。默认样式在 `templates/report.css`，要改样式用不着动它，见下面的“自定义样式”。
+默认版式：A4，边距上下 2.54cm、左右 3.17cm；正文宋体小四（英文 Times New Roman），1.5 倍行距，首行缩进两字；题目黑体二号，一、二、三级标题黑体三号、四号、小四；图题、表题和表格五号。这些默认值写在 `templates/report.md` 里，打开它就能预览效果。要改样式用不着动它，见下面的“自定义样式”。
 
 图、表、公式按章编号，第一个标题之前的内容没有章号，就直接编 `图 1`。参考文献目前要自己手写，不会自动生成。
 
@@ -138,7 +138,7 @@ style:
 这里写示例内容。打开这个文件，看到的就是模板的效果。
 ```
 
-然后在文档里写路径。文档自己的 `style` 仍然可以覆盖个别项，优先级是：内置模板 < 模板文件 < 文档的 `style`。
+然后在文档里写路径。文档自己的 `style` 仍然可以覆盖个别项，优先级是：`report` < 模板文件 < 文档的 `style`。
 
 ```markdown
 ---
@@ -149,12 +149,14 @@ style:
 ```
 
 - `template` 写名字是模板库里的模板，比如 `report`、`resume`，见下面的“模板库”；以 `./`、`../` 开头或以 `.md` 结尾的是模板文件，路径相对于当前文档，必须在打开的文件夹里。
-- 模板文件开头必须写 `extends: report`（基于内置报告）或 `extends: none`（基于普通文档，见下面的“从零写一个模板”）。模板文件不能再继承别的模板文件。模板只提供 `style`、`css`、`lang` 和 `pdf-bookmarks`，正文、题目和作者不会进入文档。
+- 模板文件开头必须写 `extends`，见下面的“模板怎么组成”。模板只提供 `style`、`css`、`lang` 和 `pdf-bookmarks`，正文、题目和作者不会进入文档。
 - 模板文件读不出来时，文档按普通文档显示，预览顶部有警告。
 - 导出时样式会嵌进 HTML 和 PDF，不需要带上模板文件。改了模板文件后，切换一下文档或编辑一下内容，预览才会更新。
-- 写错的选项名或值会列在预览顶部，这一项不生效，其他项照常。除了模板 CSS 用到的变量，只能用下表里的选项，值也都经过检查，所以 `style` 不会注入任意样式。
+- 写错的选项名或值会列在预览顶部，这一项不生效，其他项照常。值都经过检查，所以 `style` 不会注入任意样式。
 
 例子是 `examples/academic-report` 里的 `template.md` 和 `report_using_template.md`。
+
+下面是 `report` 的选项。`paper`、`page-margin`、`page-numbers` 所有模板都能用，编号格式和称呼来自 `numbered`，其余是 `report.css` 里的变量。
 
 | 选项 | 含义 | 写法 |
 | --- | --- | --- |
@@ -165,17 +167,34 @@ style:
 | `font-size` | 正文字号 | `12pt` 或 `小四`，字号名从 `初号` 到 `六号` 都可以 |
 | `line-height` | 行距 | 倍数 `1.5`，或固定值 `20pt` |
 | `first-line-indent` | 首行缩进 | `2em`，`0` 表示不缩进 |
+| `heading-font` | 题目和所有标题的字体 | 写法和 `body-font` 一样 |
 | `title-font`、`title-size`、`title-align` | 题目的字体、字号、对齐 | 对齐写 `left`、`center`、`right`、`justify` |
 | `heading-1-font`、`heading-1-size`、`heading-1-align` | 一级标题的字体、字号、对齐 | 二、三级把 `1` 换成 `2`、`3` |
 | `caption-size`、`caption-align` | 图题、表题和代码标题的字号、对齐 | |
-| `three-line-table` | 是否用三线表 | `false` 时每个格子都有边框 |
+| `table-rule`、`cell-border` | 表格上下两条线、格子的边框 | 默认是三线表（`1.5pt solid #000` 和 `0`）。两项都写 `.75pt solid #000` 时，每个格子都有边框 |
 | `numbering` | 图、表、公式、代码的编号格式 | `"2-1"`（默认）、`"2.1"`，`"1"` 表示全文连续编号，不带章号 |
 | `chapter-format` | 一级标题的编号格式 | `"第{}章"` 显示 `第1章`，`"第{cn}章"` 显示 `第一章`（1 到 99），`[@sec:名字]` 也会跟着变 |
 | `figure-label`、`table-label`、`code-label`、`appendix-label` | 图、表、代码、附录的称呼 | `Fig.` 显示 `Fig. 2-1`。不想要空格时写 `"图{}"`，显示 `图2-1` |
 
+### 模板怎么组成
+
+模板文件的 `extends` 决定它从哪里开始，可以一层层继承：
+
+```text
+none       内置，普通文档，支持 ::: 块和 [文字]{.类名}
+numbered   内置，加上标题、图、表、公式的自动编号和交叉引用
+report     templates/report.md，extends: numbered，再加上 report.css 的外观
+my-school  你写的模板，extends: report，只写要改的项
+```
+
+- `extends` 的写法和 `template` 一样：写名字，或者写路径。路径相对于写它的那个文件。
+- 每一层的 `style` 和 `css` 都生效，后面的优先。每一层的 `css` 路径都相对于它自己的文件。
+- 只有 `none` 和 `numbered` 是写在编辑器代码里的，其他都是普通文件。`extends: numbered` 只有编号和图组这些必要的版式（`templates/numbered.css`），外观是普通文档的，由你的 CSS 决定。
+- 循环继承时，预览顶部有警告，文档按普通文档显示。
+
 ### 从零写一个模板
 
-想要和报告完全不同的版式（比如简历），写一个模板文件和一个 CSS 文件就行，不用改编辑器。例子是 `templates/resume.md` 和 `templates/resume.css`。
+想要和报告完全不同的版式（比如简历），写一个模板文件和一个 CSS 文件就行，不用改编辑器。例子是 `templates/resume.md` 和 `templates/resume.css`。需要编号时把 `extends: none` 换成 `extends: numbered`，`templates/report.md` 就是这样写的。
 
 模板文件 `template.md`：
 
@@ -205,15 +224,15 @@ h2 { border-bottom: 1px solid var(--accent); }
 文档写 `template: ./template.md`，还可以在自己的 `style` 里改 `accent`。
 
 - **选择器**：直接写 `h1`、`p`、`.date`，只影响文档内容，不影响编辑器界面。`&` 表示文档本身。这些规则的优先级比默认样式高，不用加前缀。
-- **变量**：CSS 里写了 `var(--accent)`，`accent` 就是一个可以在 `style` 里设置的选项，这样用模板的人不用碰 CSS。默认值写在模板文件的 `style` 里。值里不能有 `; : { } < >` 和链接，字号可以写 `小四`。CSS 里没用到的名字会提示 `Unknown style option`。
+- **变量**：CSS 里写了 `var(--accent)`，`accent` 就是一个可以在 `style` 里设置的选项，这样用模板的人不用碰 CSS。默认值写在模板文件的 `style` 里。值里不能有 `; : { } < >` 和链接，字号可以写 `小四`。CSS 里没用到的名字会提示 `Unknown style option`。名字以 `-size`、`-align`、`-font` 结尾的，会按字号、对齐和字体检查，写错了有提示。
 - **页面**：纸张、边距和页码用 `paper`、`page-margin`、`page-numbers` 设置，CSS 里写 `@page` 不生效。
-- **选项**：`extends: none` 只有这三个页面选项和你自己的变量，字体、标题这些选项和自动编号都没有。默认的题目、日期和标签页头仍然会显示，不想要时可以不写这些字段，或者写 `.doc-head { display: none; }`。
-- **基于报告**：写 `extends: report` 再加 `css`，编号、交叉引用和报告的所有选项都保留，CSS 再覆盖外观。CSS 的优先级比 `style` 里的报告选项高，所以想让文档还能调的项，不要在 CSS 里写死。
-- **基础**：`extends: none` 的文档还能用下面的两种写法，给内容加上 class，再由 CSS 决定样式：
+- **页头**：`extends: none` 时，默认的题目、日期和标签页头仍然会显示，不想要时可以不写这些字段，或者写 `.doc-head { display: none; }`。基于 `numbered` 时，题目、作者和摘要显示在正文开头，class 是 `report-title`、`report-author` 这些。
+- **基于报告**：写 `extends: report` 再加 `css`，编号、交叉引用和报告的所有选项都保留，CSS 再覆盖外观。子模板的 CSS 写在后面，直接写 `h1` 就能盖过 `report.css`。
+- **加 class**：基于 `none` 的文档还能用下面的两种写法，给内容加上 class，再由 CSS 决定样式：
   - `[文字]{.date}` 生成 `<span class="date">`，比如 `### 公司 [2020 – 至今]{.date}`。写在标题里时，公司和日期可以用 CSS 分到左右两边，但这段文字也会进入 PDF 书签，不想要时写 `pdf-bookmarks: false`。
   - 单独一行的 `::: contact` 到 `:::` 之间的内容放进 `<div class="contact">`，里面可以写任意 Markdown。可以写几个名字（`::: job current`）；要嵌套时外层多写几个冒号（`:::: outer`）。
-  - 只能加 class，`{#id}`、`{style=...}` 这些写法不生效，会原样显示。其他模板和普通文档不支持这两种写法，也会原样显示。
-- **联网和安全**：CSS 不能加载外部内容，`@import` 和指向网址的 `url()` 都不允许，字体只能用电脑上装的，图片只能写 `url(data:...)`。字符串以外不能写反斜杠。文件有这些问题或括号不配对时，整个 CSS 都不用，预览顶部会说明原因。模板 CSS 不能运行脚本，但可以改变文档的显示内容，别人给的模板要留意这一点。
+  - 只能加 class，`{#id}`、`{style=...}` 这些写法不生效，会原样显示。基于 `numbered` 的模板和普通文档不支持这两种写法，也会原样显示。
+- **联网和安全**：CSS 不能加载外部内容，`@import` 和指向网址的 `url()` 都不允许，字体只能用电脑上装的（`@font-face` 里写 `local(...)`），图片只能写 `url(data:...)`。字符串以外不能写反斜杠。文件有这些问题或括号不配对时，整个 CSS 都不用，预览顶部会说明原因。模板 CSS 不能运行脚本，但可以改变文档的显示内容，别人给的模板要留意这一点。
 - **浏览器**：需要 Chrome 或 Edge 120 以上，更旧的版本不认识这种写法，模板 CSS 里的规则不会生效。
 
 ### 模板库
@@ -234,7 +253,8 @@ template: resume
 模板文件的写法和前面一样，`css` 的路径相对于模板文件。可以先在文档旁边写好模板文件，调到满意后移进 `templates` 文件夹。
 
 - 名字就是文件名去掉 `.md`，只能有文字、数字、`_`、`-` 和中间的空格，不能带路径。
-- `report` 这个名字留给内置报告，`templates/report.md` 不会覆盖它。
+- 打开的文件夹里的同名模板优先。这个文件夹里写 `templates/report.md`，就能改掉 `report`，它可以写 `extends: report`，继承编辑器自带的那个，只改几项。
+- `none` 和 `numbered` 是内置的，不能覆盖。
 - 写错名字时，预览顶部会列出现在可用的名字。
 - 编辑器目录下的 `templates` 不会被 git 忽略，自己加的模板要提交或者自己备份。
 

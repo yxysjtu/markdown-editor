@@ -524,9 +524,9 @@ def enable_custom_markup(md):
 
 
 MD = make_markdown()
-MD_REPORT = academic.enable(make_markdown())  # 用学术报告模板时用这个
-MD_CUSTOM = enable_custom_markup(make_markdown())  # 用 extends: none 的模板时用这个
-REPORT_CSS = APP_DIR / "templates" / "report.css"
+MD_REPORT = academic.enable(make_markdown())  # 基于 numbered 的模板用这个
+MD_CUSTOM = enable_custom_markup(make_markdown())  # 基于 none 的模板用这个
+NUMBERED_CSS = APP_DIR / "templates" / "numbered.css"
 TEMPLATE_NAME = re.compile(r"[\w-]+(?: [\w-]+)*")
 NO_TEMPLATE = {"doc_class": "", "show_head": True, "template_css": "", "toc_title": "Table of Contents"}
 
@@ -575,18 +575,19 @@ def template_target(rel, path):
     return posixpath.normpath(posixpath.join(posixpath.dirname(rel), path))
 
 
-def find_library_template(root, name):
-    """按名字找模板：先找打开的文件夹下的 templates，再找编辑器自带的 templates。返回 (所在的文件夹, 相对路径)。"""
+def find_library_template(root, name, seen):
+    """按名字找模板：先找打开的文件夹下的 templates，再找编辑器自带的 templates。返回 (所在的文件夹, 相对路径)。
+    已经用过的文件要跳过，这样打开的文件夹里的 report.md 可以写 extends: report，继承编辑器自带的那个。"""
     if isinstance(name, str) and TEMPLATE_NAME.fullmatch(name):
         target = f"templates/{name}.md"
         for folder in (root, str(APP_DIR)):
-            if markdown_path(folder, target).is_file():
+            if (folder, target) not in seen and markdown_path(folder, target).is_file():
                 return folder, target
     return None, None
 
 
 def template_names(root):
-    names = {"report"}
+    names = {"numbered"}
     for folder in (Path(root), APP_DIR):
         names.update(path.stem for path in (folder / "templates").glob("*.md") if TEMPLATE_NAME.fullmatch(path.stem))
     return ", ".join(sorted(names))
@@ -601,34 +602,41 @@ def read_template_file(root, target, template):
     meta, _, problem = split_frontmatter(content)
     if problem:
         return {}, f'Template file "{template}": {problem}'
-    if meta.get("extends") not in template_style.DOC_CLASSES:
-        return {}, f'Template file "{template}" must have "extends: report" or "extends: none" at the top.'
+    if not meta.get("extends"):
+        return {}, f'Template file "{template}" must have "extends" at the top: numbered, none or another template.'
     return meta, ""
 
 
 def find_template(meta, root, rel):
-    """frontmatter 选的模板。返回 (基础, 模板的设置, 模板所在的文件夹, 模板文件的相对路径, 问题)。基础是 report 或 none，没有模板时是 None。"""
-    template = meta.get("template")
-    if not template:  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果。它的 style 就是文档的 style
-        extends = meta.get("extends")
-        if not extends:
-            return None, {}, root, rel, []
-        if extends not in template_style.DOC_CLASSES:
-            return None, {}, root, rel, [f'"extends" must be report or none, not "{extends}"']
-        return extends, {"css": meta.get("css")}, root, rel, []
-    if template == "report":  # 这个名字留给内置报告，templates 文件夹里的同名文件不会覆盖它
-        return "report", {}, root, rel, []
-    if is_template_file(template):
-        folder, target = root, template_target(rel, template)
-    else:
-        folder, target = find_library_template(root, template)
-        if target is None:
-            return None, {}, root, rel, [f'Unknown template "{template}". Available templates: {template_names(root)}. '
-                                         'Or use the path of a template file like ./my-template.md']
-    settings, problem = read_template_file(folder, target, template)
-    if problem:
-        return None, {}, root, rel, [problem]
-    return settings["extends"], settings, folder, target, []
+    """frontmatter 选的模板，顺着 extends 一直找到内置的基础。
+    返回 (基础, 模板列表, 问题)。基础是 numbered 或 none，有问题或没有模板时是 None。模板从最上层排到最下层，后面的优先。"""
+    spec = meta.get("template")
+    folder, path = root, rel
+    chain = []
+    if not spec:  # 模板文件自己写 extends，打开它时看到的就是这个模板的效果。它的 style 就是文档的 style
+        spec = meta.get("extends")
+        if not spec:
+            return None, [], []
+        chain.append({"settings": {"css": meta.get("css")}, "folder": root, "path": rel})
+    seen = {(root, rel)}
+    while not (isinstance(spec, str) and spec in template_style.BASES):
+        if is_template_file(spec):
+            target = template_target(path, spec)
+        else:
+            folder, target = find_library_template(root, spec, seen)
+            if target is None:
+                return None, [], [f'Unknown template "{spec}". Available templates: {template_names(root)}. '
+                                  'Or use the path of a template file like ./my-template.md']
+        if (folder, target) in seen:
+            return None, [], [f'Template "{spec}" extends itself.']
+        seen.add((folder, target))
+        settings, problem = read_template_file(folder, target, spec)
+        if problem:
+            return None, [], [problem]
+        chain.insert(0, {"settings": settings, "folder": folder, "path": target})
+        path = target
+        spec = settings["extends"]
+    return spec, chain, []
 
 
 def read_template_css(root, template_path, css):
@@ -648,10 +656,10 @@ def read_template_css(root, template_path, css):
     return template_style.read_css(text, css)
 
 
-def read_pdf_bookmarks(meta, settings, problems):
-    """导出 PDF 时要不要书签。文档写的优先，其次是模板文件，写错的不生效。"""
+def read_pdf_bookmarks(sources, problems):
+    """导出 PDF 时要不要书签。sources 从模板到文档排列，后面的优先，写错的不生效。"""
     result = True
-    for source in (settings, meta):
+    for source in sources:
         value = source.get("pdf-bookmarks", result)
         if isinstance(value, bool):
             result = value
@@ -662,25 +670,36 @@ def read_pdf_bookmarks(meta, settings, problems):
 
 def render_body(meta, body, env, root, rel):
     """按 frontmatter 选的模板渲染正文，返回 (HTML, 给前端的模板信息, 问题)。前端只看模板信息，不需要知道是哪个模板。"""
-    base, settings, template_root, template_path, problems = find_template(meta, root, rel)
-    bookmarks = read_pdf_bookmarks(meta, settings, problems)
+    base, chain, problems = find_template(meta, root, rel)
+    layers = [template["settings"] for template in chain]
+    bookmarks = read_pdf_bookmarks(layers + [meta], problems)
     if base is None:
         return MD.render(body, env), {**NO_TEMPLATE, "pdf_bookmarks": bookmarks}, problems
-    custom_css, css_variables, css_problems = read_template_css(template_root, template_path, settings.get("css"))
-    values, variables, style_problems = template_style.read_style([settings.get("style"), meta.get("style")], base, css_variables)
-    problems += css_problems + style_problems
-    generated_css = template_style.build_css(values, variables, base) + "\n" + custom_css
+    css_parts = []
+    css_variables = set()
+    if base == "numbered":
+        css_parts.append(template_style.read_css(NUMBERED_CSS.read_text(encoding="utf-8"), NUMBERED_CSS.name)[0])
+    for template in chain:
+        css, names, css_problems = read_template_css(template["folder"], template["path"], template["settings"].get("css"))
+        css_parts.append(css)
+        css_variables |= names
+        problems += css_problems
+    values, variables, style_problems = template_style.read_style([layer.get("style") for layer in layers] + [meta.get("style")], base, css_variables)
+    problems += style_problems
+    doc_class = template_style.BASES[base] + (" paged" if template_style.is_paged(values) else "")
+    template_css = "\n".join([template_style.build_css(values, variables)] + css_parts)
     if base == "none":
-        info = {**NO_TEMPLATE, "doc_class": template_style.DOC_CLASSES[base], "template_css": generated_css, "pdf_bookmarks": bookmarks}
+        info = {**NO_TEMPLATE, "doc_class": doc_class, "template_css": template_css, "pdf_bookmarks": bookmarks}
         return MD_CUSTOM.render(body, env), info, problems
-    text = template_style.apply_text(academic.text_for(meta.get("lang") or settings.get("lang")), values)
+    lang = meta.get("lang") or next((layer["lang"] for layer in reversed(layers) if layer.get("lang")), None)
+    text = template_style.apply_text(academic.text_for(lang), values)
     env["report_text"] = text
     render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
     html = academic.front_matter_html(meta, text, render_inline) + MD_REPORT.render(academic.prepare_source(body), env)
     info = {
-        "doc_class": template_style.DOC_CLASSES[base],
+        "doc_class": doc_class,
         "show_head": False,  # 题目、作者和摘要已经在正文的开头
-        "template_css": REPORT_CSS.read_text(encoding="utf-8") + "\n" + generated_css,
+        "template_css": template_css,
         "toc_title": text["toc"],
         "pdf_bookmarks": bookmarks,
     }

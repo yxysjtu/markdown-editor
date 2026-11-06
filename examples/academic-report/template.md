@@ -27,7 +27,8 @@ style:
   # 图题和表题
   caption-size: 五号
   caption-align: center
-  three-line-table: false
+  table-rule: .75pt solid #000
+  cell-border: .75pt solid #000
 
   # 编号和称呼
   numbering: "2.1"

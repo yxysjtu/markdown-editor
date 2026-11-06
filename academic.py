@@ -1,4 +1,4 @@
-"""学术报告模板：文件开头写 template: report 时，给标题、图、表、公式自动编号，并支持交叉引用。
+"""内置的 numbered：基于它的模板（比如 report）会给标题、图、表、公式自动编号，并支持交叉引用。
 
 语法尽量和 Pandoc 的 pandoc-crossref 一致，以后想交给 Pandoc 转换时不用重写：
 

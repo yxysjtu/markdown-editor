@@ -73,3 +73,18 @@ body.exported.has-toc .doc { padding-left: 0; padding-right: 0; }
   .prose h1, .prose h2, .prose h3, .prose h4 { break-after: avoid; }
   .prose img, .prose tr, .prose blockquote, .prose .math-display { break-inside: avoid; }
 }
+
+/* 写了 paper 或 page-margin 的模板：预览和导出的 HTML 显示成一张纸，大小和边距由 template_style.py 生成 */
+.preview-pane:has(.doc.paged) { background: #e8e8e8; }
+.preview-pane .doc.paged { background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .18); }
+@container (max-width: 620px) {
+  .preview-pane .doc.paged { padding: 32px 20px; }
+}
+@media screen {
+  body.exported:has(.doc.paged) { background: #e8e8e8; }
+  body.exported .doc.paged { margin: 24px auto; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .18); }
+}
+@media print {
+  body:has(.doc.paged) { background: #fff; }
+  body.exported .doc.paged { max-width: none; margin: 0; padding: 0; background: none; box-shadow: none; }
+}
