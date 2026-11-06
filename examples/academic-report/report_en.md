@@ -198,3 +198,112 @@ A figure group in the second appendix
 :::
 
 A wrong reference should stand out: [@fig:missing].
+
+# Appendix
+
+``` python
+#!/usr/bin/env python3
+"""本地 Markdown 编辑器，可以打开任意文件夹。
+
+用法：bash start.sh [文件夹]，或 python editor.py [端口]，然后打开 http://localhost:8001
+
+只监听本机，并拒绝来自其他网页的请求，否则你打开的任意网站都可能改写你的文件。
+要打开哪个文件夹由每个请求的 root 参数决定，服务端不保存“当前文件夹”，所以多个窗口可以各开一个文件夹。
+"""
+import base64
+import json
+import mimetypes
+import os
+import posixpath
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote, urlsplit
+
+import yaml
+from markdown_it import MarkdownIt
+from mdit_py_plugins.anchors import anchors_plugin
+from mdit_py_plugins.dollarmath import dollarmath_plugin
+from mdit_py_plugins.footnote import footnote_plugin
+from mdit_py_plugins.tasklists import tasklists_plugin
+from pygments import highlight as pygments_highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import get_lexer_by_name
+from pygments.util import ClassNotFound
+
+import academic
+import report_style
+
+try:
+    from send2trash import TrashPermissionError, send2trash
+except ImportError:  # 只有删除文件需要它，没装时其他功能照常可用
+    send2trash = None
+    TrashPermissionError = OSError
+
+DEFAULT_PORT = 8001
+APP_DIR = Path(__file__).resolve().parent
+STATIC_DIR = APP_DIR / "static"
+RECENT_FILE = APP_DIR / "recent.json"
+PREFERENCES_FILE = APP_DIR / "preferences.json"
+STATIC_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/editor.js": ("editor.js", "text/javascript; charset=utf-8"),
+    "/editor.css": ("editor.css", "text/css; charset=utf-8"),
+    "/document.css": ("document.css", "text/css; charset=utf-8"),
+}
+MARKDOWN_SUFFIXES = (".md", ".markdown")
+SKIP_DIRS = {"node_modules", "__pycache__", "venv"}  # 依赖和缓存，里面的 Markdown 不是你写的
+MAX_TREE_ENTRIES = 50000  # 不小心打开整个硬盘时，不至于一直卡住
+MAX_RECENT = 8
+IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+MAX_IMAGE_BYTES = 50 * 1024 * 1024
+CODE_CSS = HtmlFormatter(style="default").get_style_defs("pre")
+CDN_CODEMIRROR = "https://cdn.jsdelivr.net/npm/codemirror@5.65.16/"
+CDN_KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/"
+# 第二道防线：就算清理漏了，也不能运行内联脚本，脚本只能来自这些地址，也不能向其他网站发请求
+PAGE_SECURITY_POLICY = (
+    "default-src 'none'; "
+    f"script-src 'self' {CDN_CODEMIRROR} {CDN_KATEX}; "
+    f"style-src 'self' 'unsafe-inline' {CDN_CODEMIRROR} {CDN_KATEX}; "
+    f"font-src {CDN_KATEX} data:; "
+    "img-src * data: blob:; connect-src 'self'; frame-src https:; "
+    "base-uri 'none'; form-action 'none'; object-src 'none'"
+)
+FILE_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox"  # 直接打开 SVG 时，里面的脚本不能运行
+
+recent_lock = threading.Lock()
+
+
+class ApiError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+# ---------- 路径 ----------
+def workspace(root):
+    """用户打开的文件夹，必须是绝对路径。"""
+    path = Path(root) if isinstance(root, str) and root else None
+    if path is None or not path.is_absolute():
+        raise ApiError(400, "Enter the full path of a folder")
+    if not path.is_dir():
+        raise ApiError(404, f"Folder not found: {root}")
+    return path.resolve()
+
+
+def content_path(root, rel):
+    """把相对路径转成文件路径，不允许离开打开的文件夹，也不允许碰 .git 这样的隐藏文件。"""
+    base = workspace(root)
+    parts = rel.split("/") if isinstance(rel, str) else []
+    invalid = not parts or "\\" in rel or ":" in rel or any(
+        not part or part.startswith(".") or part.endswith((" ", ".")) for part in parts
+    )
+
+```
