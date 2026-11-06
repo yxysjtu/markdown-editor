@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 240" width="420" height="240" font-family="sans-serif" font-size="12">
+  <g stroke="#000" fill="none">
+    <path d="M50 15V200H405"/>
+    <path d="M50 200l0 4M125 200l0 4M200 200l0 4M275 200l0 4M350 200l0 4"/>
+    <path d="M50 200l-4 0M50 150l-4 0M50 100l-4 0M50 50l-4 0"/>
+  </g>
+  <g fill="#000" text-anchor="middle">
+    <text x="50" y="218">1</text><text x="125" y="218">2</text><text x="200" y="218">3</text><text x="275" y="218">4</text><text x="350" y="218">5</text>
+    <text x="228" y="235">预测天数</text>
+  </g>
+  <g fill="#000" text-anchor="end">
+    <text x="42" y="204">0</text><text x="42" y="154">20</text><text x="42" y="104">40</text><text x="42" y="54">60</text>
+  </g>
+  <text x="14" y="110" transform="rotate(-90 14 110)" text-anchor="middle" fill="#000">误差（分钟）</text>
+  <polyline fill="none" stroke="#000" stroke-dasharray="6 3" points="50,120 125,105 200,88 275,70 350,48"/>
+  <polyline fill="none" stroke="#666" stroke-dasharray="2 2" points="50,135 125,125 200,115 275,102 350,92"/>
+  <polyline fill="none" stroke="#000" stroke-width="2" points="50,155 125,148 200,140 275,128 350,120"/>
+  <g font-size="11" fill="#000">
+    <line x1="62" y1="22" x2="87" y2="22" stroke="#000" stroke-dasharray="6 3"/><text x="92" y="26">线性回归</text>
+    <line x1="62" y1="38" x2="87" y2="38" stroke="#666" stroke-dasharray="2 2"/><text x="92" y="42">LSTM</text>
+    <line x1="62" y1="54" x2="87" y2="54" stroke="#000" stroke-width="2"/><text x="92" y="58">本文方法</text>
+  </g>
+</svg>

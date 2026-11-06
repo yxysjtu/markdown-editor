@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 110" width="520" height="110" font-family="sans-serif" font-size="13" text-anchor="middle">
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#333"/></marker></defs>
+  <g fill="#f2f2f2" stroke="#333">
+    <rect x="5" y="30" width="95" height="50"/>
+    <rect x="145" y="30" width="95" height="50"/>
+    <rect x="285" y="30" width="95" height="50"/>
+    <rect x="420" y="30" width="95" height="50"/>
+  </g>
+  <g fill="#000">
+    <text x="52" y="60">输入信号</text>
+    <text x="192" y="60">预处理编码</text>
+    <text x="332" y="60">注意力模块</text>
+    <text x="467" y="60">相位预测</text>
+  </g>
+  <g stroke="#333" marker-end="url(#arrow)">
+    <line x1="100" y1="55" x2="143" y2="55"/>
+    <line x1="240" y1="55" x2="283" y2="55"/>
+    <line x1="380" y1="55" x2="418" y2="55"/>
+  </g>
+</svg>

@@ -1280,6 +1280,7 @@
       if (!ok) return; // 没保存成功就不切换，否则改动会丢
       return request(fileUrl(path)).then(function (data) {
         showFile(data);
+        previewPane.scrollTop = 0;
         openFolders(parentOf(data.path)); // 只在打开文件时展开它的上级，否则用户没法折叠或展开这些文件夹
       });
     }).catch(function (err) { showStatus(err.message, true); });
@@ -1351,7 +1352,9 @@
       if (seq !== previewSeq) return;
       previewError.hidden = !data.warning;
       previewError.textContent = data.warning;
-      document.getElementById('preview-head').hidden = !(data.title || data.date || data.tags.length);
+      var isReport = data.template === 'report'; // 学术报告的题目、作者和摘要在正文的开头
+      document.getElementById('preview-doc').classList.toggle('academic', isReport);
+      document.getElementById('preview-head').hidden = isReport || !(data.title || data.date || data.tags.length);
       document.getElementById('preview-title').hidden = !data.title;
       document.getElementById('preview-title').textContent = data.title;
       document.getElementById('preview-date').textContent = data.date;
@@ -1492,6 +1495,7 @@
   // 让预览跟随编辑区：找到编辑区顶部所在的内容块，按比例滚到预览里对应的位置
   function syncScroll() {
     if (!current) return;
+    if (document.body.classList.contains('mode-preview')) return; // 编辑区隐藏时滚动信息全是 0，会误判成滚到了底
     var info = cm.getScrollInfo();
     if (info.top + info.clientHeight >= info.height - 2) {
       previewPane.scrollTop = previewPane.scrollHeight;
@@ -1557,7 +1561,10 @@
     var href = link.getAttribute('href') || '';
     if (href.charAt(0) === '#') {
       var target = document.getElementById(decodeURIComponent(href.slice(1)));
-      if (target) target.scrollIntoView();
+      if (target) {
+        // 不用 scrollIntoView：它会连外层页面一起滚动，把工具栏推出屏幕
+        previewPane.scrollTop += target.getBoundingClientRect().top - previewPane.getBoundingClientRect().top - 16;
+      }
     } else if (/^https?:/i.test(href)) {
       window.open(href, '_blank', 'noopener');
     } else if (/\.(md|markdown)(#.*)?$/i.test(href)) {

@@ -73,3 +73,96 @@ body.exported.has-toc .doc { padding-left: 0; padding-right: 0; }
   .prose h1, .prose h2, .prose h3, .prose h4 { break-after: avoid; }
   .prose img, .prose tr, .prose blockquote, .prose .math-display { break-inside: avoid; }
 }
+
+/* 学术报告模板（文件开头写 template: report）。字号按国内毕业论文和 GB/T 7713 的常见要求：
+   题目二号，一级标题三号，二级标题四号，三级标题和正文小四，图题、表题和表格五号 */
+@font-face { font-family: "Report Heading Latin"; src: local("Times New Roman Bold"), local("TimesNewRomanPS-BoldMT"); unicode-range: U+0-2FF, U+2000-206F; }
+.doc.academic {
+  --report-serif: "Times New Roman", SimSun, "Songti SC", "Noto Serif CJK SC", serif;
+  --report-sans: "Report Heading Latin", SimHei, "Heiti SC", "Noto Sans CJK SC", sans-serif;
+  color: #000;
+  font: 12pt/1.5 var(--report-serif);
+}
+.academic .prose { overflow-wrap: anywhere; }
+
+/* 题目、作者和摘要 */
+.academic .prose .report-front { margin-bottom: 1.5em; }
+.academic .prose .report-title { margin: 0 0 .6em; font: 400 22pt/1.3 var(--report-sans); text-align: center; }
+.academic .prose .report-author, .academic .prose .report-affiliation, .academic .prose .report-date { margin: 0; text-indent: 0; text-align: center; }
+.academic .prose .report-affiliation, .academic .prose .report-date { font-size: 10.5pt; }
+.academic .prose .report-abstract, .academic .prose .report-keywords { margin: .8em 0 0; text-indent: 0; font-size: 10.5pt; }
+.academic .prose .report-abstract + .report-abstract { margin-top: 0; text-indent: 2em; }
+.academic .report-label { font-family: var(--report-sans); font-weight: 400; }
+
+/* 标题：黑体不加粗，一级居中 */
+.academic .prose h1, .academic .prose h2, .academic .prose h3, .academic .prose h4 { font-family: var(--report-sans); font-weight: 400; line-height: 1.5; }
+.academic .prose h1 { margin: 1.2em 0 .8em; font-size: 16pt; text-align: center; }
+.academic .prose h2 { margin: 1em 0 .5em; font-size: 14pt; }
+.academic .prose h3 { margin: .8em 0 .4em; font-size: 12pt; }
+.academic .prose h4 { margin: .6em 0 .3em; font-size: 12pt; }
+
+/* 正文：首行缩进两字，两端对齐 */
+.academic .prose p { margin: 0; text-align: justify; text-indent: 2em; hyphens: auto; } /* 英文两端对齐时要断词，否则单词间距会被拉得很开 */
+.academic .prose ul, .academic .prose ol { margin: 0; padding-left: 2em; }
+.academic .prose li > p { margin: 0; text-indent: 0; }
+.academic .prose blockquote { margin: .5em 0; padding: 0 0 0 2em; border: 0; color: inherit; }
+.academic .prose blockquote p { text-indent: 0; }
+.academic .prose a { color: inherit; text-decoration: none; }
+.academic .prose a[href^="http"] { color: var(--accent); }
+.academic .prose .xref { white-space: nowrap; }
+.academic .prose .xref:hover { text-decoration: underline; }
+.academic .prose .xref-missing { color: #c0392b; font-weight: 700; }
+
+/* 图：图题在图下方 */
+.academic .report-figure { margin: 1em 0; text-align: center; }
+.academic .prose .report-figure { text-indent: 0; }
+.academic .report-figure img { display: block; max-width: 100%; margin: 0 auto; }
+.academic .prose .report-caption { margin: .5em 0 0; font-size: 10.5pt; line-height: 1.5; text-align: center; text-indent: 0; }
+.academic .caption-label { font-family: var(--report-sans); }
+
+/* 图组：每行等宽，子图的图片和子标题各自按行对齐，整组不跨页 */
+.academic .report-figure-group { margin: 1em 0; text-align: center; break-inside: avoid; }
+.academic .figure-grid { display: grid; grid-template-columns: repeat(var(--figure-columns), minmax(0, 1fr)); gap: .3em 1em; }
+.academic .subfigure { display: grid; grid-row: span 2; grid-template-rows: subgrid; align-items: center; margin: 0; min-width: 0; }
+.academic .subfigure img { display: block; width: 100%; height: auto; max-width: 100%; margin: 0 auto; }
+.academic .prose .subfigure-caption { align-self: start; margin: .3em 0 0; }
+
+/* 分页符：预览时显示一条虚线，打印时才真正分页 */
+.academic .page-break { position: relative; margin: 1.5em 0; border-top: 1px dashed #999; }
+.academic .page-break::after { content: attr(data-label); position: absolute; top: -.75em; left: 50%; padding: 0 .6em; background: #fff; color: #888; font-size: 9pt; transform: translateX(-50%); }
+@media print {
+  .academic .page-break { margin: 0; border: 0; break-after: page; }
+  .academic .page-break::after { content: none; }
+}
+
+/* 表：表题在表上方，三线表 */
+.academic .prose .table-caption { margin: 1em 0 .4em; }
+.academic .prose table { display: table; width: auto; min-width: 60%; max-width: 100%; margin: 0 auto 1em; border-top: 1.5pt solid #000; border-bottom: 1.5pt solid #000; font-size: 10.5pt; line-height: 1.4; }
+.academic .prose .table-caption + table { margin-top: 0; }
+.academic .prose th, .academic .prose td { padding: 3pt 10pt; border: 0; text-align: center; }
+.academic .prose th { border-bottom: .75pt solid #000; background: none; font-family: var(--report-sans); font-weight: 400; }
+
+/* 公式：居中，编号靠右。KaTeX 默认放大到 1.21 倍，在 Times 和宋体旁边明显偏大 */
+.academic .prose .katex { font-size: 1.04em; }
+.academic .equation { position: relative; display: flex; align-items: center; justify-content: center; margin: .6em 0; padding: 0 3.5em; }
+.academic .prose .equation .math-display { overflow: visible; } /* KaTeX 的下标会超出几像素，打印时也不能有滚动条 */
+.academic .equation .katex-display { margin: 0; }
+.academic .equation-number { position: absolute; right: 0; }
+
+/* 代码和脚注。代码的标题和表题一样在上方，不和代码分在两页 */
+.academic .prose .code-caption { margin: 1em 0 .4em; break-after: avoid; }
+.academic .prose .code-caption + pre { margin-top: 0; }
+.academic .prose code { padding: 0; background: none; font: 10.5pt/1.4 Consolas, Menlo, "Courier New", monospace; }
+.academic .prose pre { margin: .8em 0; padding: 6pt 8pt; border: .75pt solid #999; border-radius: 0; background: none; line-height: 1.3; }
+.academic .prose pre code { font-size: 9pt; }
+.academic .prose hr { margin: 1.5em 0; border-top: .75pt solid #000; }
+.academic .prose .footnotes { font-size: 9pt; }
+.academic .prose .footnotes p { text-indent: 0; }
+.academic .prose ul.contains-task-list { padding-left: 0; }
+
+/* 预览时像一张 A4 纸：边距上下 2.54cm、左右 3.17cm */
+.preview-pane:has(.doc.academic) { background: #e8e8e8; }
+.preview-pane .doc.academic { max-width: 21cm; min-height: 29.7cm; padding: 2.54cm min(15.1%, 3.17cm); background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .18); }
+@container (max-width: 620px) {
+  .preview-pane .doc.academic { padding: 32px 20px; }
+}

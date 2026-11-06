@@ -31,6 +31,8 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 
+import academic
+
 try:
     from send2trash import TrashPermissionError, send2trash
 except ImportError:  # 只有删除文件需要它，没装时其他功能照常可用
@@ -450,16 +452,22 @@ def add_line_numbers(state):
             token.attrSet("data-line", str(token.map[0] + offset))
 
 
-MD = (
-    MarkdownIt("commonmark", {"html": True, "highlight": highlight_code})
-    .enable(["table", "strikethrough"])
-    .use(dollarmath_plugin, allow_digits=False, double_inline=True, renderer=render_math)
-    .use(footnote_plugin)
-    .use(tasklists_plugin)
-    .use(anchors_plugin, max_level=4)
-)
-MD.core.ruler.push("strip_quote_markers", strip_quote_markers)
-MD.core.ruler.push("add_line_numbers", add_line_numbers)
+def make_markdown():
+    md = (
+        MarkdownIt("commonmark", {"html": True, "highlight": highlight_code})
+        .enable(["table", "strikethrough"])
+        .use(dollarmath_plugin, allow_digits=False, double_inline=True, renderer=render_math)
+        .use(footnote_plugin)
+        .use(tasklists_plugin)
+        .use(anchors_plugin, max_level=4)
+    )
+    md.core.ruler.push("strip_quote_markers", strip_quote_markers)
+    md.core.ruler.push("add_line_numbers", add_line_numbers)
+    return md
+
+
+MD = make_markdown()
+MD_REPORT = academic.enable(make_markdown())  # 文件开头写 template: report 时用这个
 
 
 def parse_tags(value):
@@ -504,7 +512,17 @@ def api_render(data):
     markdown_path(root, rel)
     source = data.get("content") or ""
     meta, body, warning = split_frontmatter(source)
-    html = MD.render(body, {"line_offset": source.count("\n") - body.count("\n")})
+    env = {"line_offset": source.count("\n") - body.count("\n")}
+    template = meta.get("template")
+    if template == "report":
+        text = academic.text_for(meta)
+        env["report_text"] = text
+        render_inline = lambda value: MD.renderInline(value, {"line_offset": 0})
+        html = academic.front_matter_html(meta, text, render_inline) + MD_REPORT.render(academic.prepare_source(body), env)
+    else:
+        html = MD.render(body, env)
+        if template:
+            warning = warning or f'Unknown template "{template}". The available template is: report'
     date = meta.get("date")
     return {
         "title": str(meta.get("title") or ""),
@@ -512,6 +530,7 @@ def api_render(data):
         "tags": parse_tags(meta.get("tags")),
         "html": rewrite_images(html, root, rel),
         "warning": warning,
+        "template": "report" if template == "report" else "",
     }
 
 
