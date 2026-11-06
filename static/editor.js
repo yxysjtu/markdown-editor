@@ -1537,10 +1537,21 @@
   previewPane.addEventListener('scroll', updateTocActive, { passive: true });
   setTocPinned(localStorage.getItem('editor-toc-pinned') === '1');
 
+  var isSyncingPreview = false;
+  var isSyncingEditor = false;
+
   // 让预览跟随编辑区：找到编辑区顶部所在的内容块，按比例滚到预览里对应的位置
   function syncScroll() {
     if (!current) return;
     if (document.body.classList.contains('mode-preview')) return; // 编辑区隐藏时滚动信息全是 0，会误判成滚到了底
+    
+    // 防止双向同步导致的死循环
+    if (isSyncingEditor) {
+      isSyncingEditor = false;
+      return;
+    }
+    isSyncingPreview = true;
+
     var info = cm.getScrollInfo();
     if (info.top + info.clientHeight >= info.height - 2) {
       previewPane.scrollTop = previewPane.scrollHeight;
@@ -1568,6 +1579,53 @@
     previewPane.scrollTop = offsetOf(before) + ratio * (targetEnd - offsetOf(before));
   }
 
+  // 让编辑区跟随预览区：找到预览区顶部所在的内容块，反向推算编辑区的滚动位置
+  function syncEditorScroll() {
+    if (!current) return;
+    if (document.body.classList.contains('mode-preview')) return;
+
+    // 防止双向同步导致的死循环
+    if (isSyncingPreview) {
+      isSyncingPreview = false;
+      return;
+    }
+    isSyncingEditor = true;
+
+    // 如果预览区滚到了最底部，编辑器也直接到底
+    if (previewPane.scrollTop + previewPane.clientHeight >= previewPane.scrollHeight - 2) {
+      var info = cm.getScrollInfo();
+      cm.scrollTo(null, info.height);
+      return;
+    }
+
+    var blocks = previewBody.querySelectorAll('[data-line]');
+    var before = null;
+    var after = null;
+    var offsetOf = function (el) {
+      return el.getBoundingClientRect().top - previewPane.getBoundingClientRect().top + previewPane.scrollTop;
+    };
+
+    // 找到当前预览区顶部处于哪两个内容块之间
+    for (var i = 0; i < blocks.length; i++) {
+      if (offsetOf(blocks[i]) <= previewPane.scrollTop) before = blocks[i];
+      else { after = blocks[i]; break; }
+    }
+
+    if (!before) {
+      cm.scrollTo(null, 0);
+      return;
+    }
+
+    // 按比例反向计算编辑器应该滚动的像素高度
+    var start = offsetOf(before);
+    var end = after ? offsetOf(after) : previewPane.scrollHeight;
+    var targetStart = cm.heightAtLine(+before.dataset.line, 'local');
+    var targetEnd = after ? cm.heightAtLine(+after.dataset.line, 'local') : cm.getScrollInfo().height;
+    var ratio = end > start ? (previewPane.scrollTop - start) / (end - start) : 0;
+    
+    cm.scrollTo(null, targetStart + ratio * (targetEnd - targetStart));
+  }
+
   // ---------- 事件 ----------
   cm.on('change', function () {
     if (!current) return;
@@ -1582,6 +1640,7 @@
     }
   });
   cm.on('scroll', syncScroll);
+  previewPane.addEventListener('scroll', syncEditorScroll, { passive: true });
 
   // 把预览里的相对链接解析成打开文件夹内的路径
   function resolveLink(href) {
