@@ -54,6 +54,15 @@ class LineBreaks(RenderTest):
             "![](a.png) ![](b.png)": ["IMG IMG"],
         })
 
+    def test_text_after_a_lone_tag_line_is_markdown(self):
+        """Typora 写的 <img ...> 单独一行时，后面的文字不能变成一大段原样的 HTML。"""
+        html = self.html('<img src="a.png" style="zoom:50%;" />\nfirst\n### Heading\n- item', NONE)
+        self.assertEqual(paragraphs(html), ["first"])
+        self.assertIn(">Heading</h3>", html)
+        self.assertIn("<li>item</li>", html)
+        self.assertEqual(paragraphs(self.html('<audio controls src="a.mp3"></audio>\none\ntwo', NONE)), ["one", "two"])
+        self.assertIn("<div>\nraw\n</div>", self.html("<div>\nraw\n</div>", NONE))  # 真正的 HTML 块不受影响
+
     def test_line_numbers_follow_the_source(self):
         html = self.render(f"---\n{NONE}\n---\none\ntwo\n![](a.png)\na $x\ny$ b\nafter")["html"]
         self.assertEqual(re.findall(r'data-line="(\d+)"', html), ["3", "4", "5", "6", "8"])

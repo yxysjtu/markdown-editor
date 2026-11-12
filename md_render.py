@@ -214,6 +214,34 @@ def render_video(self, tokens, idx, options, env):
             'referrerpolicy="strict-origin-when-cross-origin"></iframe></div>\n')
 
 
+# 一行只有图片、录音、视频这类标签（Typora 写的 <img src=... style="zoom:50%"> 就是这样），
+# 或者只有结束标签（</details> 后面直接接着写列表），或者是折叠块的开头 <details> 和 <summary>标题</summary>
+# （里面紧接着写 Markdown，不空行）
+TAG_LINE = re.compile(r"[ \t]*(?:(?:<(img|br|audio|video|source|embed|iframe|picture)\b[^<>]*>[ \t]*(?:</\1>[ \t]*)?)+"
+                      r"|(?:</[A-Za-z][\w-]*>[ \t]*)+"
+                      r"|<details\b[^<>]*>[ \t]*(?:<summary\b[^<>]*>.*?</summary>[ \t]*)?"
+                      r"|<summary\b[^<>]*>.*?</summary>[ \t]*)")
+
+
+def tag_line(state, start, end, silent):
+    """标准 Markdown 里，一行只有一个标签时会开始一段原样输出的 HTML，一直到空行为止，
+    后面的文字不再分段，标题、列表也不认了，全挤在一起。这里让这一行单独成块，下一行照常按 Markdown 处理。"""
+    if state.sCount[start] - state.blkIndent >= 4:  # 缩进四格是代码块
+        return False
+    line = state.src[state.bMarks[start] + state.tShift[start]:state.eMarks[start]]
+    if not TAG_LINE.fullmatch(line):
+        return False
+    if start + 1 >= end or state.isEmpty(start + 1):
+        return False  # 后面是空行时，原来的规则就没问题
+    if silent:
+        return True
+    token = state.push("html_block", "", 0)
+    token.map = [start, start + 1]
+    token.content = line + "\n"
+    state.line = start + 1
+    return True
+
+
 def make_markdown():
     md = (
         MarkdownIt("commonmark", {"html": True, "highlight": highlight_code})
@@ -226,6 +254,7 @@ def make_markdown():
     md.core.ruler.push("strip_quote_markers", strip_quote_markers)
     md.core.ruler.after("inline", "split_lines", split_lines)
     md.block.ruler.before("paragraph", "video", video_block, {"alt": ["paragraph"]})
+    md.block.ruler.before("html_block", "tag_line", tag_line)
     md.add_render_rule("video", render_video)
     md.core.ruler.push("add_line_numbers", add_line_numbers)
     return md
