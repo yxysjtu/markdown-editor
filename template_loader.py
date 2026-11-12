@@ -2,6 +2,7 @@
 
 只有 none 和 numbered 是内置的，其他模板都是普通文件：先找路径，再按名字找 templates 文件夹。
 """
+import base64
 import posixpath
 import re
 from pathlib import Path
@@ -16,6 +17,13 @@ NUMBERED_CSS = APP_DIR / "templates" / "numbered.css"
 TEMPLATE_NAME = re.compile(r"[\w-]+(?: [\w-]+)*")
 # 打开的文件夹里放自己模板的文件夹。博客改成 _templates，开头的下划线让它不会变成导航栏的栏目
 LIBRARY = "templates"
+# 模板 CSS 可以引用旁边的这些文件，见 embed_files
+EMBED_TYPES = {"woff2": "font/woff2", "woff": "font/woff", "otf": "font/otf", "ttf": "font/ttf",
+               "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+EMBED_LIMIT = 2 * 1024 * 1024
+CSS_FILE_URL = re.compile(r"""url\(\s*(["']?)([^"')\s]*)\1\s*\)""", re.I)
+_embedded = {}  # (路径, 修改时间, 大小) -> base64
+EMBED_URL = re.compile(r"(?:\./)?[\w\-]+(?:/[\w\-.]+)*\.\w+")  # 相对路径：不以 / 开头，没有冒号和反斜杠；.. 由 content_path 拦住
 
 
 def split_frontmatter(source):
@@ -104,6 +112,41 @@ def find_template(meta, root, rel):
     return spec, chain, []
 
 
+def embed_files(text, root, css_path, css):
+    """模板 CSS 里 url(./fonts/x.woff2) 这样指向模板旁边的字体和图片，换成 data: 写进样式。
+    这样模板 CSS 仍然一个网络请求都不发，预览、导出的 HTML 和 PDF 都能用。只认相对路径，
+    不能离开模板所在的文件夹（content_path 会拦住 ../ 和隐藏文件），其他写法原样留着，交给 css_problem 拒绝。
+    返回 (换好的 CSS, 问题)。"""
+    problems = []
+
+    def embed(match):
+        url = match.group(2)
+        if url.lower().startswith("data:") or not EMBED_URL.fullmatch(url):
+            return match.group(0)
+        mime = EMBED_TYPES.get(url.rsplit(".", 1)[-1].lower())
+        if mime is None:
+            problems.append(f'Template CSS "{css}": url({url}) is not used. Only {", ".join(sorted(EMBED_TYPES))} files can be used.')
+            return 'url("data:,")'
+        try:
+            path = content_path(root, template_target(css_path, url))
+            if not path.is_file():
+                raise ApiError(404, "File not found")
+            if path.stat().st_size > EMBED_LIMIT:
+                raise ApiError(400, f"The file is larger than {EMBED_LIMIT // 1024 // 1024} MB")
+            stat = path.stat()
+            key = (str(path), stat.st_mtime_ns, stat.st_size)
+            if key not in _embedded:  # 预览每次改动都会重新渲染，字体不用每次都读一遍
+                _embedded[key] = base64.b64encode(path.read_bytes()).decode("ascii")
+            data = _embedded[key]
+        except (ApiError, OSError) as err:
+            reason = err.message if isinstance(err, ApiError) else str(err)
+            problems.append(f'Template CSS "{css}": cannot read url({url}): {reason}.')
+            return 'url("data:,")'
+        return f'url("data:{mime};base64,{data}")'
+
+    return CSS_FILE_URL.sub(embed, text), problems
+
+
 def read_template_css(root, template_path, css):
     """模板写的 css: ./x.css，路径相对于模板文件。返回 (样式, 用到的变量名, 问题)。"""
     if not css:
@@ -111,14 +154,17 @@ def read_template_css(root, template_path, css):
     try:
         if not isinstance(css, str) or not css.lower().endswith(".css"):
             raise ApiError(400, "Only .css files can be used")
-        path = content_path(root, template_target(template_path, css))
+        css_path = template_target(template_path, css)
+        path = content_path(root, css_path)
         if not path.is_file():
             raise ApiError(404, "File not found")
         text = path.read_bytes().decode("utf-8-sig")
     except (ApiError, UnicodeDecodeError) as err:
         reason = err.message if isinstance(err, ApiError) else "The file is not UTF-8"
         return "", set(), [f'Cannot read template CSS "{css}": {reason}.']
-    return template_style.read_css(text, css)
+    text, problems = embed_files(text, root, css_path, css)
+    style, names, css_problems = template_style.read_css(text, css)
+    return style, names, problems + css_problems
 
 
 def read_pdf_bookmarks(sources, problems):

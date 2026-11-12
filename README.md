@@ -56,6 +56,11 @@ bash start.sh "C:/Users/me/notes"
 ### 学术报告
 在文件开头写 `template: report`，预览就会变成毕业论文和学术报告的版式，并自动给标题、图、表、公式编号。其他文件不受影响。字体、字号、编号格式等都可以改，见后面的“自定义样式”。它是一个普通的模板，就是 `templates/report.md` 和 `report.css`，编号和交叉引用来自内置的 `numbered`。例子在 `examples/academic-report` 里，打开这个文件夹就能看到效果。
 
+### 学术文章
+写 `template: article` 是英文学术文章的版式，照 LaTeX 默认的 article 类（12pt）排：Computer Modern 字体，题目和作者居中，段首不缩进、段落之间空一点，两端对齐，章节标题加粗并编号成 1、1.1，图、表、公式全文连续编号（Figure 1、Eq. (1)）。默认 A4、四边 1 英寸，写 `paper: Letter` 就和美国的 LaTeX 默认一样。字体是 `templates/fonts` 里的 Latin Modern（Computer Modern 的开源版），不用自己安装。它和 `report` 一样基于 `numbered`，选项见 `templates/article.md`。例子在 `examples/academic-article` 里。
+
+导出 PDF 时英文不会自动断词：Chrome 生成 PDF 用的是一个全新的配置，没有断词词典，所以两端对齐的行间距有时会比 LaTeX 稍大，内容也会稍长一点。
+
 ```markdown
 ---
 template: report
@@ -173,6 +178,7 @@ style:
 | `paper` | 纸张大小 | `A3`、`A4`、`A5`、`B5`、`Letter` |
 | `page-margin` | 页边距 | 和 CSS 一样写 1 到 4 个长度：`2.5cm` 四边相同，`2.54cm 3.17cm` 上下、左右，`3cm 2.5cm 2.5cm 3cm` 上、右、下、左。单位是 `cm`、`mm`、`in`、`pt` |
 | `page-numbers` | PDF 是否显示页码 | `true`、`false` |
+| `page-number-font`、`page-number-size` | 页码的字体和字号，默认 10.5pt 的 Times New Roman | `Article Roman`、`12pt` |
 | `body-font` | 正文字体 | 用逗号分隔。英文字体写在前面，中文才会用后面的字体：`Times New Roman, KaiTi` |
 | `font-size` | 正文字号 | `12pt` 或 `小四`，字号名从 `初号` 到 `六号` 都可以 |
 | `line-height` | 行距 | 倍数 `1.5`，或固定值 `20pt` |
@@ -236,6 +242,7 @@ h2 { border-bottom: 1px solid var(--accent); }
 - **选择器**：直接写 `h1`、`p`、`.date`，只影响文档内容，不影响编辑器界面。`&` 表示文档本身。这些规则的优先级比默认样式高，不用加前缀。
 - **变量**：CSS 里写了 `var(--accent)`，`accent` 就是一个可以在 `style` 里设置的选项，这样用模板的人不用碰 CSS。默认值写在模板文件的 `style` 里。值里不能有 `; : { } < >` 和链接，字号可以写 `小四`。CSS 里没用到的名字会提示 `Unknown style option`。名字以 `-size`、`-align`、`-font` 结尾的，会按字号、对齐和字体检查，写错了有提示。
 - **页面**：纸张、边距和页码用 `paper`、`page-margin`、`page-numbers` 设置，CSS 里写 `@page` 不生效。
+- **字体和图片**：CSS 不能联网，`url()` 可以写 `data:`，也可以指向模板旁边的字体和图片，比如 `url(./fonts/x.woff2)`（woff2、woff、otf、ttf、png、jpg、gif、webp，每个不超过 2 MB）。渲染时它们会被直接写进样式，所以预览、导出的 HTML 和 PDF 都能用；不能用 `../` 离开模板所在的文件夹。例子是 `templates/article.css`。
 - **页头**：`extends: none` 时，默认的题目、日期和标签页头仍然会显示，不想要时可以不写这些字段，或者写 `.doc-head { display: none; }`。基于 `numbered` 时，题目、作者和摘要显示在正文开头，可以用的 class 见下面的“模板能用的 class”。
 - **基于报告**：写 `extends: report` 再加 `css`，编号、交叉引用和报告的所有选项都保留，CSS 再覆盖外观。子模板的 CSS 写在后面，直接写 `h1` 就能盖过 `report.css`。
 - **加 class**：用模板的文档（基于 `none` 或 `numbered` 都可以）还能用下面的两种写法，给内容加上 class，再由 CSS 决定样式：
@@ -348,15 +355,5 @@ python tests/compare_pdf.py compare
 - 文件树会跳过以 `.` 开头的文件和文件夹，以及 `node_modules`、`__pycache__`、`venv`。
 - 最近打开的文件夹记录在 `recent.json` 里，不会提交到 git。
 
-## TODO
-- 可能文献引用换成.bib 需要 BibTeX 或 CSL JSON 加自动生成。
-- **多文件章节。** 毕设很少只有一个文件，通常一章一个。README 里没提到 include 或合并多文件的功能。每个文件单独渲染的话，图表编号不能跨章连续，[@fig:x] 也不能引用别的章里的图。这个比增量编译重要得多，也更容易漏掉。？？我感觉可能没有必要，我不做很大的文件
-- 真正值得补的：被删的是当前打开的文件
-  这个监听里，检查当前文件的请求如果失败（文件被删就是 404），写的是 .catch(function () {})，也就是静默吞掉。结果是文件已经没了，编辑区里却什么提示都没有，要等到你保存时，api_save 发现文件不存在，返回 409，才会被告知。
-  这不会丢数据：保存时会询问，不会悄悄把文件建回去。但你得很晚才知道，比"文件树晚一点更新"更容易让人困惑。
-- ![](_images/image-20261106-222324.png)这个颜色渲染是不是出错了
-- 导出还做typst和latex的导出。虽然格式全丢了，但是内容还在
-- 制作学术文章的template，参考sop的格式
-- * 我想把编辑器的渲染代码单独一个python这样别人就可以复用
-- **选中文件的黑色块太重。** 其他部分都很轻、很浅，只有这一块是实心深色，视觉上抢了焦点。换成浅灰或浅蓝底加深色文字，会和整体更协调。
-- 粗体的\*需要跟后面隔开一个空格才能正常渲染
+
+

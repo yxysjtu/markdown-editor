@@ -208,6 +208,55 @@ class TemplateCss(RenderTest):
         data = self.render("---\ntemplate: ./t.md\n---\nx")
         self.assertEqual(data["warning"], 'Unknown style option "typo"')
 
+    def test_files_next_to_the_template_are_embedded(self):
+        """url(./fonts/x.woff2) 指向模板旁边的文件时写成 data:，样式里没有一个要联网或读本地文件的地址。"""
+        (self.root / "t" / "fonts").mkdir(parents=True)
+        (self.root / "t" / "fonts" / "a.woff2").write_bytes(b"font-bytes")
+        self.write("t/t.css", '@font-face { font-family: X; src: url(./fonts/a.woff2) format("woff2"); }\n'
+                              "h1 { background: url('fonts/a.woff2'); }")
+        self.write("t/t.md", "---\nextends: none\ncss: ./t.css\n---\n")
+        data = self.render("---\ntemplate: ./t/t.md\n---\nx")
+        self.assertEqual(data["warning"], "")
+        self.assertEqual(data["template_css"].count('url("data:font/woff2;base64,Zm9udC1ieXRlcw==")'), 2)
+        self.assertNotIn("fonts/a.woff2", data["template_css"])
+        self.assertIn("@font-face { font-family: X;", data["template_css"].split(SCOPE)[0])  # 字体规则不能放进选择器里
+
+    def test_embedding_cannot_reach_other_files(self):
+        (self.work / "outside.woff2").write_bytes(b"x")
+        (self.root / ".hidden.woff2").write_bytes(b"x")
+        self.write("note.txt", "x")
+        cases = {
+            "missing.woff2": "cannot read",
+            "note.txt": "is not used",
+        }
+        for url, message in cases.items():
+            with self.subTest(url):
+                self.write("bad.css", f"h1 {{ background: url({url}); }} h2 {{ color: red; }}")
+                data = self.template("css: ./bad.css")
+                self.assertIn(message, data["warning"])
+                self.assertIn('url("data:,")', data["template_css"])
+                self.assertIn("color: red", data["template_css"])  # 其余的样式照样能用
+        for url in ("../outside.woff2", "./.hidden.woff2", "http://x/a.woff2", "//x/a.woff2", "/a.woff2", "C:/a.woff2",
+                    "file:///C:/a.woff2"):
+            with self.subTest(url):
+                self.write("bad.css", f"h1 {{ background: url({url}); }}")
+                data = self.template("css: ./bad.css")
+                self.assertIn("was not used", data["warning"])
+                self.assertNotIn(SCOPE, data["template_css"])
+
+    def test_page_number_font_and_size(self):
+        data = self.render("---\ntemplate: none\nstyle:\n  page-numbers: true\n  page-number-font: Article Roman\n  page-number-size: 12pt\n---\nx")
+        self.assertIn('content: counter(page); font: 12pt "Article Roman", serif', data["template_css"])
+        default = self.render("---\ntemplate: none\nstyle:\n  page-numbers: true\n---\nx")
+        self.assertIn('font: 10.5pt "Times New Roman", serif', default["template_css"])
+        wrong = self.render("---\ntemplate: none\nstyle:\n  page-numbers: true\n  page-number-font: a;b\n---\nx")
+        self.assertIn("page-number-font", wrong["warning"])
+
+    def test_article_uses_its_fonts(self):
+        data = self.render("---\ntemplate: article\n---\n# a")
+        self.assertEqual((data["doc_class"], data["warning"]), ("numbered paged", ""))
+        self.assertEqual(data["template_css"].count("data:font/woff2;base64,"), 6)
+
     def test_css_field_in_a_document_is_ignored(self):
         self.write("x.css", "h1 { color: red; }")
         self.assertNotIn("color: red", self.render("---\ntemplate: report\ncss: ./x.css\n---\nx")["template_css"])

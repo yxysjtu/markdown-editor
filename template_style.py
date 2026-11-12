@@ -17,6 +17,7 @@ CHAPTER_FORMAT = re.compile(r"[^{}]*\{(?:cn)?\}[^{}]*")
 MAX_LABEL_LENGTH = 30
 PAPERS = {"A3": (29.7, 42), "A4": (21, 29.7), "A5": (14.8, 21), "B5": (17.6, 25), "LETTER": (21.59, 27.94)}
 DEFAULT_PAPER = PAPERS["A4"]
+DEFAULT_PAGE_NUMBER_FONT = '"Times New Roman"'
 DEFAULT_MARGIN = (1.8, 1.6, 1.8, 1.6)  # 上右下左，单位是 cm。和 document.css 里普通文档的页边距一样
 NUMBER_SEPARATORS = {"2-1": "-", "2.1": ".", "1": ""}  # 空的表示全文连续编号，不带章号
 
@@ -165,7 +166,8 @@ TEXT_OPTIONS = {
     "code-label": (label, "lst"),
     "appendix-label": (label, "appendix"),
 }
-PAGE_OPTIONS = {"paper": paper, "page-margin": page_margin, "page-numbers": switch}  # 所有模板都能用
+PAGE_OPTIONS = {"paper": paper, "page-margin": page_margin, "page-numbers": switch,  # 所有模板都能用
+                "page-number-font": font_names, "page-number-size": size}
 
 
 def decode_escape(match):
@@ -199,7 +201,7 @@ def css_problem(text):
         return 'a "{" is not closed'
     decoded = CSS_ESCAPE.sub(decode_escape, without_comments(text)).lower()
     if CSS_NETWORK.search(decoded) or any(not url.startswith("data:") for url in CSS_URL.findall(decoded)):
-        return "it must not load anything from outside: @import is not allowed, and url() only works with data:"
+        return "it must not load anything from outside: @import is not allowed, and url() only works with data: or files next to the template"
     return ""
 
 
@@ -278,7 +280,10 @@ def page_rules(values):
         descriptors.append(f"size: {centimeters(width)} {centimeters(height)};")
     if "page-margin" in values:
         descriptors.append("margin: " + " ".join(centimeters(side) for side in values["page-margin"]) + ";")
-    number = 'counter(page); font: 10.5pt "Times New Roman", serif' if values.get("page-numbers") else '""'
+    # 页码的字体和字号：page-number-font、page-number-size，默认 10.5pt 的 Times New Roman
+    size_ = values.get("page-number-size", "10.5pt")
+    family = values.get("page-number-font", DEFAULT_PAGE_NUMBER_FONT)
+    number = f"counter(page); font: {size_} {family}, serif" if values.get("page-numbers") else '""'
     descriptors.append(f"@bottom-center {{ content: {number}; }} {BLANK_MARGIN_BOXES}")
     rules = ["@page { " + " ".join(descriptors) + " }"]
     if is_paged(values):

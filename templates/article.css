@@ -1,0 +1,89 @@
+/* 学术文章模板的外观，照 LaTeX 默认的 article 类（12pt）排：Computer Modern 字体，题目居中，
+   段首不缩进、段落之间空一点，两端对齐并断词，章节标题加粗、编号写成 1、1.1。var(--名字) 的默认值在 article.md。
+   字体是 fonts 文件夹里的 Latin Modern（Computer Modern 的开源版），构建时写进样式，不联网 */
+
+@font-face { font-family: "Article Roman"; font-weight: 400; font-style: normal; src: url(./fonts/article-roman-regular.woff2) format("woff2"); }
+@font-face { font-family: "Article Roman"; font-weight: 700; font-style: normal; src: url(./fonts/article-roman-bold.woff2) format("woff2"); }
+@font-face { font-family: "Article Roman"; font-weight: 400; font-style: italic; src: url(./fonts/article-roman-italic.woff2) format("woff2"); }
+@font-face { font-family: "Article Roman"; font-weight: 700; font-style: italic; src: url(./fonts/article-roman-bolditalic.woff2) format("woff2"); }
+@font-face { font-family: "Article Title"; font-weight: 400; font-style: normal; src: url(./fonts/article-title-regular.woff2) format("woff2"); }
+@font-face { font-family: "Article Mono"; font-weight: 400; font-style: normal; src: url(./fonts/article-mono-regular.woff2) format("woff2"); }
+
+& {
+  color: #000;
+  font-family: var(--body-font), serif;
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+}
+.prose { overflow-wrap: break-word; }
+
+/* 题目、作者、日期：和 \maketitle 一样居中 */
+.front-matter { margin: 1.6em 0 2.2em; text-align: center; }
+.doc-title { margin: 0 0 1.1em; font-family: var(--title-font), var(--body-font), serif; font-size: var(--title-size); font-weight: 400; line-height: 1.2; }
+.front-matter > p { text-align: center; }  /* 正文的段落是两端对齐，这里要盖过去 */
+.doc-author { margin: 0; font-size: var(--author-size); line-height: 1.3; }
+.doc-affiliation { margin: .2em 0 0; font-size: var(--font-size); }
+.doc-date { margin: .8em 0 0; font-size: var(--author-size); }
+/* 摘要：比正文小一号，左右缩进，和 abstract 环境一样 */
+.front-matter > .doc-abstract, .front-matter > .doc-keywords { margin: 1.4em 2.5em 0; font-size: var(--small-size); line-height: 1.25; text-align: justify; hyphens: auto; }
+.front-matter > .doc-abstract + .doc-abstract { margin-top: var(--paragraph-spacing); }
+.front-matter > .doc-keywords { margin-top: .8em; }
+.front-label { font-weight: 700; }
+
+/* 章节标题：粗体，\section 是 \Large，\subsection 是 \large，\subsubsection 和正文一样大 */
+h1, h2, h3, h4 { font-weight: 700; line-height: 1.2; text-align: left; break-after: avoid; }
+h1 { margin: 1.5em 0 .7em; font-size: var(--heading-1-size); }
+h2 { margin: 1.3em 0 .6em; font-size: var(--heading-2-size); }
+h3 { margin: 1.2em 0 .5em; font-size: var(--heading-3-size); }
+h4 { margin: 1em 0 .3em; font-size: var(--font-size); }
+.front-matter + h1, .front-matter + h2 { margin-top: 0; }
+.heading-number { margin-right: .5em; }
+
+/* 正文：段首不缩进，段落之间空 paragraph-spacing；两端对齐时英文要断词，否则单词间距会被拉得很开 */
+p { margin: var(--paragraph-spacing) 0 0; text-align: justify; text-indent: var(--first-line-indent); hyphens: auto; }
+h1 + p, h2 + p, h3 + p, h4 + p { margin-top: 0; }
+ul, ol { margin: var(--paragraph-spacing) 0 0; padding-left: 2.5em; }
+li { margin: .15em 0; }
+li > p { margin: 0; text-indent: 0; }
+blockquote { margin: var(--paragraph-spacing) 2.5em 0; padding: 0; border: 0; color: inherit; }
+blockquote p { text-indent: 0; }
+a { color: var(--link-color); text-decoration: none; }
+strong { font-weight: 700; }
+hr { margin: 1.5em 0; border: 0; border-top: .4pt solid #000; }
+
+/* 图题、表题和代码标题：Figure 1. 说明，比正文小一点 */
+.figure, .figure-group { margin: 1.2em 0; }
+.caption { margin: .5em 0 0; font-size: var(--small-size); line-height: 1.25; text-align: center; text-indent: 0; }
+.caption-label { font-weight: 400; }
+
+/* 表：三条线（booktabs 的样子），不画竖线 */
+.table-caption { margin: 1.2em 0 .4em; }
+table { display: table; width: auto; max-width: 100%; margin: 0 auto 1em; border-collapse: collapse; border-top: 1pt solid #000; border-bottom: 1pt solid #000; font-size: var(--small-size); line-height: 1.3; }
+.table-caption + table { margin-top: 0; }
+th, td { padding: 3pt 8pt; border: 0; text-align: center; }
+th { border-bottom: .5pt solid #000; background: none; font-weight: 700; }
+
+/* 公式 */
+.katex { font-size: 1.1em; }
+
+/* 代码：等宽的 Latin Modern Mono，和 verbatim 一样不加底色 */
+.code-caption { margin: 1.2em 0 .4em; break-after: avoid; }
+.code-caption + pre, .code-caption + .code-long pre { margin-top: 0; }
+code { padding: 0; background: none; font-family: var(--code-font), Consolas, monospace; font-size: .95em; }
+pre { margin: var(--paragraph-spacing) 0 0; padding: .4em 0 .4em 1.5em; border: 0; border-radius: 0; background: none; line-height: 1.25; }
+pre code { font-size: var(--small-size); }
+pre code span { color: inherit; font-style: normal; font-weight: 400; }  /* 和 verbatim 一样是黑色，不高亮 */
+
+/* 脚注：正文里是上标数字，文末一条短线，和 LaTeX 一样 */
+.footnote-ref { font-size: .7em; line-height: 0; }
+.footnotes-sep { width: 30%; margin: 2em 0 .6em; border: 0; border-top: .4pt solid #000; }
+.footnotes { font-size: var(--small-size); line-height: 1.25; }
+.footnotes ol { padding-left: 1.5em; }
+.footnotes p { margin: 0; text-indent: 0; }
+ul.contains-task-list { padding-left: 0; }
+
+@media print {
+  p { orphans: 2; widows: 2; }
+  a { color: inherit; }
+  .footnote-backref { display: none; }
+}
