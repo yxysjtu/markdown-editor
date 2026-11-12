@@ -555,6 +555,18 @@
     }
   }
 
+  // 移动文件时一起搬的图片，攒起来写进“Moved 2 items”这条提示
+  var imageTally = { moved: 0, copied: 0, renamed: 0 };
+
+  function imageMoveMessage() {
+    var plural = function (n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); };
+    var parts = [];
+    if (imageTally.moved) parts.push(plural(imageTally.moved, 'image') + ' moved along');
+    if (imageTally.copied) parts.push(plural(imageTally.copied, 'shared image') + ' copied');
+    if (imageTally.renamed) parts.push(imageTally.renamed + ' renamed to avoid overwriting');
+    return parts.length ? ' (' + parts.join(', ') + ')' : '';
+  }
+
   function movePath(from, to, folderToShow) {
     var affectsCurrent = false;
     return opening.then(function () {
@@ -565,17 +577,21 @@
       if (!ok) return null;
       return request('/api/move', { root: root, from: from, to: to }).then(function (data) {
         if (status.classList.contains('error')) keepStatus(''); // 这次成功了，之前的错误不该还留着
+        if (data.images) ['moved', 'copied', 'renamed'].forEach(function (key) { imageTally[key] += data.images[key] || 0; });
+        var reload = null;
         if (affectsCurrent) {
           current.path = data.path + current.path.slice(from.length);
           filePath.textContent = current.path;
           document.title = current.path.split('/').pop() + ' · Markdown Editor';
           history.replaceState(null, '', location.search + '#' + encodeURIComponent(current.path));
-          renderPreview(); // 图片的相对路径变了
+          // 新位置有同名图片时，服务器给图片换了名字并改了文件里的引用，要重新读进来
+          if (data.images && data.images.rewritten) reload = reloadFromDisk();
+          else renderPreview(); // 图片的相对路径变了
         }
         selection = new Set(Array.from(selection, function (path) {
           return isInside(path, from) ? data.path + path.slice(from.length) : path;
         }));
-        return loadTree().then(function () {
+        return Promise.resolve(reload).then(loadTree).then(function () {
           if (folderToShow !== undefined) openFolders(folderToShow);
           return data.path;
         });
@@ -688,6 +704,7 @@
     var moving = paths.filter(function (path) { return parentOf(path) !== folder; });
     var moved = 0;
     lastMoveError = '';
+    imageTally = { moved: 0, copied: 0, renamed: 0 };
     return moving.reduce(function (done, from) {
       return done.then(function () {
         return movePath(from, joinPath(folder, from.split('/').pop()), folder);
@@ -695,7 +712,7 @@
         if (path !== null) moved++;
       });
     }, Promise.resolve()).then(function () {
-      if (moved === moving.length) showStatus('Moved ' + moved + (moved === 1 ? ' item' : ' items'));
+      if (moved === moving.length) showStatus('Moved ' + moved + (moved === 1 ? ' item' : ' items') + imageMoveMessage());
       else if (moving.length > 1) showStatus('Moved ' + moved + ' of ' + moving.length + ' items: ' + lastMoveError, true);
       // 只有一项且失败时，错误就是 movePath 显示的那条
     });
@@ -2102,6 +2119,121 @@
     var suffix = newItemName.value.lastIndexOf('.');
     newItemName.setSelectionRange(0, suffix === -1 ? newItemName.value.length : suffix); // 后缀不用改，不选中
   }
+
+  // ---------- 清理未使用的图片 ----------
+  // 选中一个文件夹时只清理它，否则清理整个打开的文件夹；判断有没有被用时看整个打开的文件夹
+  var cleanButton = document.getElementById('clean-images');
+  var cleanDialog = document.getElementById('clean-dialog');
+  var cleanList = document.getElementById('clean-list');
+  var cleanAll = document.getElementById('clean-all');
+  var cleanConfirm = document.getElementById('clean-confirm');
+  var cleanError = document.getElementById('clean-error');
+  var IMAGE_PREVIEW = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+  cleanButton.hidden = false;
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function cleanBoxes() {
+    return Array.prototype.slice.call(cleanList.querySelectorAll('input[type=checkbox]'));
+  }
+
+  function updateCleanSelection() {
+    var boxes = cleanBoxes();
+    var checked = boxes.filter(function (box) { return box.checked; });
+    var size = checked.reduce(function (sum, box) { return sum + Number(box.dataset.size); }, 0);
+    cleanAll.checked = checked.length === boxes.length;
+    cleanAll.indeterminate = checked.length > 0 && checked.length < boxes.length;
+    cleanConfirm.disabled = checked.length === 0;
+    cleanConfirm.textContent = checked.length
+      ? 'Move ' + checked.length + (checked.length === 1 ? ' file' : ' files') + ' (' + formatSize(size) + ') to Recycle Bin'
+      : 'Move to Recycle Bin';
+  }
+
+  function cleanItemRow(item) {
+    var li = document.createElement('li');
+    var label = document.createElement('label');
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = true;
+    box.value = item.path;
+    box.dataset.size = item.size;
+    var thumb;
+    if (IMAGE_PREVIEW.test(item.path)) {
+      thumb = document.createElement('img');
+      thumb.className = 'clean-thumb';
+      thumb.loading = 'lazy';
+      thumb.alt = '';
+      thumb.src = '/files?root=' + encodeURIComponent(root) + '&path=' + encodeURIComponent(item.path);
+    } else {
+      thumb = document.createElement('span');
+      thumb.className = 'clean-media';
+      thumb.textContent = item.path.split('.').pop();
+    }
+    var name = document.createElement('span');
+    name.className = 'clean-path';
+    name.textContent = '‎' + item.path + '‎'; // 从右往左省略时，标点不跟着跑到另一头
+    name.title = item.path;
+    var size = document.createElement('span');
+    size.className = 'clean-size';
+    size.textContent = formatSize(item.size);
+    label.append(box, thumb, name, size);
+    li.appendChild(label);
+    return li;
+  }
+
+  cleanButton.addEventListener('click', function () {
+    var only = selection.size === 1 ? Array.from(selection)[0] : null;
+    var folder = only !== null && isFolderPath(only) ? only : '';
+    var where = folder ? '"' + folder + '"' : 'the open folder';
+    cleanButton.disabled = true;
+    request('/api/unused-images?root=' + encodeURIComponent(root) + (folder ? '&path=' + encodeURIComponent(folder) : ''))
+      .then(function (data) {
+        if (!data.images.length) {
+          showStatus('No unused images in ' + where);
+          return;
+        }
+        cleanList.textContent = '';
+        data.images.forEach(function (item) { cleanList.appendChild(cleanItemRow(item)); });
+        var count = data.images.length + (data.images.length === 1 ? ' file' : ' files');
+        document.getElementById('clean-summary').textContent = (folder ? count + ' in ' + where : count) +
+          (data.images.length === 1 ? ' is' : ' are') + ' not used by any Markdown or HTML file in the open folder.' +
+          ' Checked files go to the Recycle Bin, so you can restore them.';
+        cleanError.hidden = true;
+        updateCleanSelection();
+        cleanDialog.showModal();
+        cleanConfirm.focus();
+      })
+      .catch(function (err) { showStatus(err.message, true); })
+      .then(function () { cleanButton.disabled = false; });
+  });
+
+  cleanList.addEventListener('change', updateCleanSelection);
+  cleanAll.addEventListener('change', function () {
+    cleanBoxes().forEach(function (box) { box.checked = cleanAll.checked; });
+    updateCleanSelection();
+  });
+  document.getElementById('clean-cancel').addEventListener('click', function () { cleanDialog.close(); });
+  document.getElementById('clean-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    if (cleanConfirm.disabled) return;
+    var paths = cleanBoxes().filter(function (box) { return box.checked; }).map(function (box) { return box.value; });
+    cleanConfirm.disabled = true;
+    request('/api/trash-images', { root: root, paths: paths }).then(function (data) {
+      cleanDialog.close();
+      var message = 'Moved ' + data.trashed.length + (data.trashed.length === 1 ? ' file' : ' files') + ' to the Recycle Bin';
+      if (data.kept.length) message += '; kept ' + data.kept.length + ' that a file started using';
+      showStatus(message);
+      return loadTree();
+    }).catch(function (err) {
+      cleanError.textContent = err.message;
+      cleanError.hidden = false;
+      updateCleanSelection();
+    });
+  });
 
   newFileButton.addEventListener('click', function () { openNewItemDialog('file'); });
   document.getElementById('new-item-cancel').addEventListener('click', function () {

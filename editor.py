@@ -299,8 +299,111 @@ def api_move(data):
     if not target.parent.is_dir():
         raise ApiError(404, "Destination folder not found")
     # 不用上面规范化后的 target：Windows 上它会变回磁盘上的旧大小写，只改大小写时就改不动了
-    os.rename(source, workspace(root) / target_rel)
-    return {"path": target_rel}
+    final = workspace(root) / target_rel
+    moving_file = source.is_file()
+    images = image_references(source) if moving_file and source.parent.resolve() != final.parent.resolve() else []
+    os.rename(source, final)
+    result = {"path": target_rel}
+    if images:
+        result["images"] = move_images(root, source, final, images)
+    return result
+
+
+# ---------- 移动文件时带上图片 ----------
+IMAGE_REFERENCE = re.compile(
+    # ![说明](路径 "标题")；路径有空格时写成 <路径>；路径里可以有成对的括号，比如 a(1).png
+    r"!\[[^\]]*\]\(\s*(?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))(?:\s+[\"'(][^)]*)?\)"
+    r"|<(?:img|audio|video|source)\b[^>]*?\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.I)  # <img src="路径">，录音和视频也算
+
+
+def image_references(path):
+    """文件里引用的、和它放在同一个文件夹（或子文件夹）里的图片，返回 [(写在文件里的路径, 相对文件夹的路径)]。
+    网址、绝对路径和指向上级文件夹的不算：它们不跟着文件走。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    found = []
+    for match in IMAGE_REFERENCE.finditer(text):
+        written = match.group(1) or match.group(2) or match.group(3)
+        if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:|/|#|\\", written):
+            continue
+        relative = posixpath.normpath(unquote(re.split(r"[?#]", written, maxsplit=1)[0]))
+        if relative.startswith("..") or relative == "." or relative.lower().endswith(MARKDOWN_SUFFIXES):
+            continue
+        if (path.parent / relative).is_file() and (written, relative) not in found:
+            found.append((written, relative))
+    return found
+
+
+def referenced_elsewhere(root, moved_to, image):
+    """打开的文件夹里，除了刚移动的文件，还有没有别的 Markdown 用到这张图片。"""
+    base = workspace(root)
+    for folder, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in SKIP_DIRS]
+        for name in files:
+            other = Path(folder) / name
+            if not name.lower().endswith(MARKDOWN_SUFFIXES) or other == moved_to:
+                continue
+            for _, relative in image_references(other):
+                if os.path.normcase((other.parent / relative).resolve()) == os.path.normcase(image.resolve()):
+                    return True
+    return False
+
+
+def same_bytes(a, b):
+    return a.stat().st_size == b.stat().st_size and a.read_bytes() == b.read_bytes()
+
+
+def move_images(root, old_file, new_file, images):
+    """把文件引用的图片按原来的相对位置放到新文件夹：_images/a.png 还是放进新位置的 _images。
+    别的文件也在用的图片复制一份，不搬走；新位置已有同名但不同的图片时，不覆盖，换个名字并改文件里的引用。"""
+    old_folder, new_folder = old_file.parent, new_file.parent
+    report = {"moved": 0, "copied": 0, "renamed": 0}
+    replacements = {}
+    emptied = set()
+    for written, relative in images:
+        source = old_folder / relative
+        if not source.is_file():  # 同一张图写了两种路径，前面已经搬走了
+            continue
+        target = new_folder / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shared = referenced_elsewhere(root, new_file, source)
+        if target.exists():
+            if same_bytes(source, target):  # 新位置已经有一模一样的，直接用它
+                if not shared:
+                    source.unlink()
+                    emptied.add(source.parent)
+                report["moved" if not shared else "copied"] += 1
+                continue
+            stem, suffix = target.stem, target.suffix
+            number = 1
+            while target.exists():  # a-1.png：不用空格和括号，引用里不用转义
+                target = target.with_name(f"{stem}-{number}{suffix}")
+                number += 1
+            folder_part = posixpath.dirname(relative)
+            new_relative = posixpath.join(folder_part, target.name) if folder_part else target.name
+            # 只转义空格和括号，中文文件名保持原样，方便阅读
+            replacements[written] = new_relative.replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+            report["renamed"] += 1
+        if shared:
+            shutil.copy2(source, target)
+            report["copied"] += 1
+        else:
+            shutil.move(str(source), target)
+            emptied.add(source.parent)
+            report["moved"] += 1
+    for folder in sorted(emptied, key=lambda p: len(p.parts), reverse=True):  # 搬空的图片文件夹删掉，不留空壳
+        while folder != old_folder and old_folder in folder.parents and folder.is_dir() and not any(folder.iterdir()):
+            folder.rmdir()
+            folder = folder.parent
+    if replacements:
+        text = new_file.read_bytes().decode("utf-8")  # 不用 read_text：它会把 \r\n 换成 \n，改掉文件原来的换行
+        for written, new in replacements.items():
+            text = re.sub(r"(\]\(\s*<?|src\s*=\s*[\"'])" + re.escape(written), lambda m: m.group(1) + new, text)
+        write_file(new_file, text)
+        report["rewritten"] = True
+    return report
 
 
 def api_delete(data):
@@ -318,6 +421,94 @@ def api_delete(data):
     except TrashPermissionError as err:
         raise ApiError(500, f"Could not move it to the Recycle Bin: {err}")
     return {"path": data.get("path")}
+
+
+# ---------- 清理未使用的图片 ----------
+MEDIA_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif", ".heic", ".tif", ".tiff",
+                  ".mp3", ".m4a", ".wav", ".ogg", ".aac", ".flac", ".mp4", ".mov", ".webm", ".m4v")
+REFERENCE = re.compile(
+    r"\]\(\s*(?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))"  # ![](路径) 和 [](路径)
+    r"|\b(?:src|href|poster|data)\s*=\s*[\"']([^\"']+)[\"']"  # <img src> <a href> <video poster> <object data>
+    r"|^\s*\[[^\]]+\]:\s*<?([^\s>]+)", re.I | re.M)  # [名字]: 路径（引用式链接）
+
+
+def walk_files(base):
+    for folder, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in SKIP_DIRS]
+        for name in files:
+            if not name.startswith("."):
+                yield Path(folder) / name
+
+
+def referenced_files(root):
+    """打开的文件夹里，所有 Markdown 和 HTML 文件引用到的本地文件（规范化后的绝对路径）。
+    包括 ../ 指向别的文件夹的，所以别处在用的图片不会被当成没用。"""
+    used = set()
+    for document in walk_files(workspace(root)):
+        if not document.name.lower().endswith(MARKDOWN_SUFFIXES + (".html", ".htm")):
+            continue
+        try:
+            text = document.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in REFERENCE.finditer(text):
+            target = next(group for group in match.groups() if group)
+            if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:|#|//", target):
+                continue
+            path = unquote(re.split(r"[?#]", target, maxsplit=1)[0])
+            base = workspace(root) if path.startswith("/") else document.parent
+            used.add(os.path.normcase(os.path.normpath(base / path.lstrip("/"))))
+    return used
+
+
+def unused_media(root, folder):
+    used = referenced_files(root)
+    found = []
+    for path in walk_files(folder):
+        if path.suffix.lower() in MEDIA_SUFFIXES and os.path.normcase(os.path.normpath(path)) not in used:
+            found.append(path)
+    return found
+
+
+def api_unused_images(root, rel):
+    """选中的文件夹（没选就是整个打开的文件夹）里，没有被任何 Markdown 或 HTML 引用的图片、录音和视频。"""
+    folder = content_path(root, rel) if rel else workspace(root)
+    if not folder.is_dir():
+        raise ApiError(404, "Folder not found")
+    base = workspace(root)
+    images = [{"path": path.relative_to(base).as_posix(), "size": path.stat().st_size} for path in unused_media(root, folder)]
+    return {"folder": rel or "", "images": sorted(images, key=lambda item: natural_key(item["path"]))}
+
+
+def api_trash_images(data):
+    """把选中的未使用图片移到回收站。动手前再查一遍，这期间被引用了的就不删。"""
+    root = data.get("root")
+    paths = data.get("paths")
+    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+        raise ApiError(400, "Expected a list of paths")
+    if send2trash is None:
+        raise ApiError(500, "Deleting needs the send2trash package. Run: pip install -r requirements.txt")
+    used = referenced_files(root)
+    trashed, kept = [], []
+    folders = set()
+    for rel in paths:
+        path = content_path(root, rel)
+        if not path.is_file() or path.suffix.lower() not in MEDIA_SUFFIXES:
+            raise ApiError(400, f"Not an image: {rel}")
+        if os.path.normcase(os.path.normpath(path)) in used:
+            kept.append(rel)
+            continue
+        try:
+            send2trash(str(path))
+        except TrashPermissionError as err:
+            raise ApiError(500, f"Could not move it to the Recycle Bin: {err}")
+        trashed.append(rel)
+        folders.add(path.parent)
+    base = workspace(root)
+    for folder in folders:  # 清空了的图片文件夹也删掉，不留空壳
+        if folder != base and folder.is_dir() and not any(folder.iterdir()):
+            folder.rmdir()
+    return {"trashed": trashed, "kept": kept}
 
 
 def api_folder_info(root, rel):
@@ -573,6 +764,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, api_tree(query.get("root")))
         elif url.path == "/api/folder-info":
             self.send_json(200, api_folder_info(query.get("root"), query.get("path")))
+        elif url.path == "/api/unused-images":
+            self.send_json(200, api_unused_images(query.get("root"), query.get("path")))
         elif url.path == "/api/file":
             self.send_json(200, api_read(query.get("root"), query.get("path")))
         elif url.path == "/files":
@@ -607,6 +800,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/new-folder": api_new_folder,
             "/api/move": api_move,
             "/api/delete": api_delete,
+            "/api/trash-images": api_trash_images,
             "/api/image": api_save_image,
             "/api/render": api_render,
             "/api/preferences": api_save_preferences,

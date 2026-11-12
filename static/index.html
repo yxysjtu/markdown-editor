@@ -40,6 +40,9 @@
   <button type="button" id="delete-file" title="Move current file to the Recycle Bin" aria-label="Move current file to the Recycle Bin" disabled hidden>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/></svg>
   </button>
+  <button type="button" id="clean-images" title="Clean up unused images" aria-label="Clean up unused images" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.75 3.5L12.25 11M7.75 11h8.5l2 9.5H5.75zM9.75 15.5l-.5 5M13.75 15.5l.5 5"/></svg>
+  </button>
   <div id="export" class="export" hidden>
     <button type="button" id="export-toggle" title="Export" aria-label="Export" aria-haspopup="menu" aria-expanded="false" disabled>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M4 20h16"/></svg>
@@ -118,6 +121,20 @@
     <div class="pref-actions">
       <button type="button" id="new-item-cancel">Cancel</button>
       <button type="submit" id="new-item-create" class="pref-primary">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="clean-dialog" class="preferences clean-dialog" aria-labelledby="clean-title">
+  <form id="clean-form" method="dialog">
+    <h2 id="clean-title">Unused Images</h2>
+    <p id="clean-summary" class="clean-summary"></p>
+    <label id="clean-all-row" class="clean-all"><input type="checkbox" id="clean-all" checked> Select all</label>
+    <ul id="clean-list" class="clean-list"></ul>
+    <p id="clean-error" class="pref-error" hidden></p>
+    <div class="pref-actions">
+      <button type="button" id="clean-cancel">Cancel</button>
+      <button type="submit" id="clean-confirm" class="pref-primary">Move to Recycle Bin</button>
     </div>
   </form>
 </dialog>
