@@ -14,6 +14,7 @@ import re
 from urllib.parse import parse_qs
 
 from markdown_it import MarkdownIt
+from markdown_it.rules_inline.state_inline import Scanned, StateInline
 from mdit_py_plugins.anchors import anchors_plugin
 from mdit_py_plugins.container import container_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
@@ -214,6 +215,31 @@ def render_video(self, tokens, idx, options, env):
             'referrerpolicy="strict-origin-when-cross-origin"></iframe></div>\n')
 
 
+# ---------- 中文里的粗体 ----------
+# 标准 Markdown 里，** 一边是中文字、另一边是标点时不算粗体：“的**“第一阶段”**”、“（ILAS）**流程”都会原样显示 **。
+# 这里放宽：** 外侧是中日韩文字时，当作外侧是空格来判断。只对 * 生效，_ 的规则不变；
+# markdown-it-py 不能按解析器替换这条规则，所以改的是全局的函数，但只对 make_markdown() 建的解析器生效。
+CJK_CHAR = re.compile(r"[⺀-⿿぀-ヿ㄀-ㇿ㐀-䶿一-鿿가-힯豈-﫿＀-￯]")
+_scan_delims = StateInline.scanDelims
+
+
+def _scan_delims_cjk(self, start, canSplitWord):
+    result = _scan_delims(self, start, canSplitWord)
+    if not getattr(self.md, "cjk_emphasis", False) or self.src[start] != "*":
+        return result
+    end = start
+    while end < self.posMax and self.src[end] == "*":
+        end += 1
+    before = self.src[start - 1] if start > 0 else " "
+    after = self.src[end] if end < self.posMax else " "
+    can_open = result.can_open or (not after.isspace() and bool(CJK_CHAR.match(before)))
+    can_close = result.can_close or (not before.isspace() and bool(CJK_CHAR.match(after)))
+    return Scanned(can_open, can_close, result.length)
+
+
+StateInline.scanDelims = _scan_delims_cjk
+
+
 # 一行只有图片、录音、视频这类标签（Typora 写的 <img src=... style="zoom:50%"> 就是这样），
 # 或者只有结束标签（</details> 后面直接接着写列表），或者是折叠块的开头 <details> 和 <summary>标题</summary>
 # （里面紧接着写 Markdown，不空行）
@@ -257,6 +283,7 @@ def make_markdown():
     md.block.ruler.before("html_block", "tag_line", tag_line)
     md.add_render_rule("video", render_video)
     md.core.ruler.push("add_line_numbers", add_line_numbers)
+    md.cjk_emphasis = True  # 中文里的粗体，见 _scan_delims_cjk
     return md
 
 
