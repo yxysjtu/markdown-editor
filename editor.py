@@ -277,7 +277,8 @@ def api_new(data):
     rel = with_name(rel, unused_name(path, path.stem, path.suffix))
     path = markdown_path(root, rel)
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_file(path, f"# {path.stem}\n\n")
+    # 写上创建日期：博客按它排序，搬运旧日记时直接改成当天的日期
+    write_file(path, f"---\ndate: {datetime.now():%Y-%m-%d}\n---\n\n# {path.stem}\n\n")
     return {"path": rel}
 
 
@@ -418,6 +419,72 @@ def strip_quote_markers(state):
             token.content = re.sub(rf"^[ \t]*(?:>[ \t]?){{1,{depth}}}", "", token.content, flags=re.M)
 
 
+def is_image_line(children):
+    """这一行只有图片（可以带链接，比如 [![](a.png)](url)，或者编号模板的 {#fig:a width=60%}），没有文字。"""
+    return any(child.type == "image" for child in children) and all(
+        child.type in ("image", "link_open", "link_close")
+        or (child.type == "text" and re.fullmatch(r"\s*(?:\{[^{}]*\}\s*)?", child.content))
+        for child in children)
+
+
+def split_lines(state):
+    """一行就是一段：换行直接换段，不用空一行。图片单独占一行时也自成一段。
+    行尾写两个空格或反斜杠（硬换行）时只换行、不换段，用来写诗、地址这类要分行的内容，
+    不过单独占一行的图片仍然自成一段。加粗、链接等没有结束的地方不拆开，否则格式会断掉。
+    紧凑列表里的段落不显示 <p>，拆开会让各行粘在一起，所以那里换行变成 <br>。"""
+    tokens = []
+    index = 0
+    while index < len(state.tokens):
+        opening = state.tokens[index]
+        inline = state.tokens[index + 1] if index + 1 < len(state.tokens) else None
+        if opening.type != "paragraph_open" or not inline or inline.type != "inline" or not opening.map:
+            tokens.append(opening)
+            index += 1
+            continue
+        closing = state.tokens[index + 2]
+        lines = [{"number": 0, "before": None, "free": True, "children": []}]
+        depth = 0  # 还没结束的加粗、链接等有几层
+        for child in inline.children or []:
+            if child.type in ("softbreak", "hardbreak"):
+                # 跨行的行内公式里自己带着换行，也要算进行号
+                skipped = sum(c.content.count("\n") for c in lines[-1]["children"] if c.type != "text")
+                lines.append({"number": lines[-1]["number"] + 1 + skipped, "before": child, "free": depth == 0, "children": []})
+            else:
+                depth += child.nesting
+                lines[-1]["children"].append(child)
+        if opening.hidden:
+            for line in lines[1:]:
+                if line["free"] and line["before"].type == "softbreak":
+                    line["before"].type, line["before"].tag = "hardbreak", "br"
+            tokens += [opening, inline, closing]
+            index += 3
+            continue
+        pieces = []  # [起始行, 行数, 内容]
+        for position, line in enumerate(lines):
+            image = is_image_line(line["children"])
+            split = position > 0 and line["free"] and (
+                line["before"].type == "softbreak" or image or is_image_line(lines[position - 1]["children"]))
+            if position == 0 or split:
+                pieces.append([line["number"], 1, line["children"]])
+            else:
+                pieces[-1][1] += 1
+                pieces[-1][2] = pieces[-1][2] + [line["before"]] + line["children"]
+        if len(pieces) == 1:
+            tokens += [opening, inline, closing]
+            index += 3
+            continue
+        source = inline.content.split("\n")
+        for number, count, children in pieces:
+            first = opening.map[0] + number
+            tokens += [
+                opening.copy(attrs=dict(opening.attrs), map=[first, first + count]),
+                inline.copy(children=children, content="\n".join(source[number:number + count]), map=[first, first + count]),
+                closing.copy(attrs=dict(closing.attrs)),
+            ]
+        index += 3
+    state.tokens = tokens
+
+
 def add_line_numbers(state):
     """给顶层内容标上源文件行号，用于同步滚动。"""
     offset = state.env["line_offset"]
@@ -436,6 +503,7 @@ def make_markdown():
         .use(anchors_plugin, max_level=4)
     )
     md.core.ruler.push("strip_quote_markers", strip_quote_markers)
+    md.core.ruler.after("inline", "split_lines", split_lines)
     md.core.ruler.push("add_line_numbers", add_line_numbers)
     return md
 
