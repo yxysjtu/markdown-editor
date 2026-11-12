@@ -22,18 +22,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from markdown_it import MarkdownIt
-from mdit_py_plugins.anchors import anchors_plugin
-from mdit_py_plugins.container import container_plugin
-from mdit_py_plugins.dollarmath import dollarmath_plugin
-from mdit_py_plugins.footnote import footnote_plugin
-from mdit_py_plugins.tasklists import tasklists_plugin
-from pygments import highlight as pygments_highlight
 from pygments.formatters import HtmlFormatter
-from pygments.lexers import get_lexer_by_name
-from pygments.util import ClassNotFound
 
 import numbered
+from md_render import enable_custom_markup, make_markdown
 import template_loader
 import template_style
 from paths import MARKDOWN_SUFFIXES, ApiError, content_path, markdown_path, read_markdown, workspace
@@ -76,10 +68,6 @@ FILE_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox" 
 
 recent_lock = threading.Lock()
 
-
-CLASS_NAME = r"[^\W\d][\w-]*"
-BLOCK_CLASSES = re.compile(rf"{CLASS_NAME}(?: {CLASS_NAME})*")
-SPAN_CLASSES = re.compile(rf"\{{\s*(\.{CLASS_NAME}(?:\s+\.{CLASS_NAME})*)\s*\}}")
 
 # ---------- 文件树 ----------
 def natural_key(name):
@@ -389,163 +377,6 @@ def api_save_image(data):
     return {"path": saved, "link": quote(posixpath.relpath(saved, posixpath.dirname(document) or "."))}
 
 # ---------- 渲染 ----------
-def highlight_code(code, lang, _attrs):
-    try:
-        lexer = get_lexer_by_name(lang)
-    except ClassNotFound:
-        return ""  # 交给 markdown-it 按普通代码块输出
-    return pygments_highlight(code, lexer, HtmlFormatter(nowrap=True))
-
-
-def escape_html(text):
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-
-def render_math(content, opts):
-    if opts.get("display_mode"):
-        return f'<span class="math math-display">\\[{escape_html(content)}\\]</span>'
-    return f'<span class="math">\\({escape_html(content)}\\)</span>'
-
-
-def strip_quote_markers(state):
-    """公式插件不会去掉引用里每行开头的 >，这里按引用层数去掉。"""
-    depth = 0
-    for token in state.tokens:
-        if token.type == "blockquote_open":
-            depth += 1
-        elif token.type == "blockquote_close":
-            depth -= 1
-        elif token.type == "math_block" and depth:
-            token.content = re.sub(rf"^[ \t]*(?:>[ \t]?){{1,{depth}}}", "", token.content, flags=re.M)
-
-
-def is_image_line(children):
-    """这一行只有图片（可以带链接，比如 [![](a.png)](url)，或者编号模板的 {#fig:a width=60%}），没有文字。"""
-    return any(child.type == "image" for child in children) and all(
-        child.type in ("image", "link_open", "link_close")
-        or (child.type == "text" and re.fullmatch(r"\s*(?:\{[^{}]*\}\s*)?", child.content))
-        for child in children)
-
-
-def split_lines(state):
-    """一行就是一段：换行直接换段，不用空一行。图片单独占一行时也自成一段。
-    行尾写两个空格或反斜杠（硬换行）时只换行、不换段，用来写诗、地址这类要分行的内容，
-    不过单独占一行的图片仍然自成一段。加粗、链接等没有结束的地方不拆开，否则格式会断掉。
-    紧凑列表里的段落不显示 <p>，拆开会让各行粘在一起，所以那里换行变成 <br>。"""
-    tokens = []
-    index = 0
-    while index < len(state.tokens):
-        opening = state.tokens[index]
-        inline = state.tokens[index + 1] if index + 1 < len(state.tokens) else None
-        if opening.type != "paragraph_open" or not inline or inline.type != "inline" or not opening.map:
-            tokens.append(opening)
-            index += 1
-            continue
-        closing = state.tokens[index + 2]
-        lines = [{"number": 0, "before": None, "free": True, "children": []}]
-        depth = 0  # 还没结束的加粗、链接等有几层
-        for child in inline.children or []:
-            if child.type in ("softbreak", "hardbreak"):
-                # 跨行的行内公式里自己带着换行，也要算进行号
-                skipped = sum(c.content.count("\n") for c in lines[-1]["children"] if c.type != "text")
-                lines.append({"number": lines[-1]["number"] + 1 + skipped, "before": child, "free": depth == 0, "children": []})
-            else:
-                depth += child.nesting
-                lines[-1]["children"].append(child)
-        if opening.hidden:
-            for line in lines[1:]:
-                if line["free"] and line["before"].type == "softbreak":
-                    line["before"].type, line["before"].tag = "hardbreak", "br"
-            tokens += [opening, inline, closing]
-            index += 3
-            continue
-        pieces = []  # [起始行, 行数, 内容]
-        for position, line in enumerate(lines):
-            image = is_image_line(line["children"])
-            split = position > 0 and line["free"] and (
-                line["before"].type == "softbreak" or image or is_image_line(lines[position - 1]["children"]))
-            if position == 0 or split:
-                pieces.append([line["number"], 1, line["children"]])
-            else:
-                pieces[-1][1] += 1
-                pieces[-1][2] = pieces[-1][2] + [line["before"]] + line["children"]
-        if len(pieces) == 1:
-            tokens += [opening, inline, closing]
-            index += 3
-            continue
-        source = inline.content.split("\n")
-        for number, count, children in pieces:
-            first = opening.map[0] + number
-            tokens += [
-                opening.copy(attrs=dict(opening.attrs), map=[first, first + count]),
-                inline.copy(children=children, content="\n".join(source[number:number + count]), map=[first, first + count]),
-                closing.copy(attrs=dict(closing.attrs)),
-            ]
-        index += 3
-    state.tokens = tokens
-
-
-def add_line_numbers(state):
-    """给顶层内容标上源文件行号，用于同步滚动。"""
-    offset = state.env["line_offset"]
-    for token in state.tokens:
-        if token.map and token.level == 0 and token.nesting >= 0:
-            token.attrSet("data-line", str(token.map[0] + offset))
-
-
-def make_markdown():
-    md = (
-        MarkdownIt("commonmark", {"html": True, "highlight": highlight_code})
-        .enable(["table", "strikethrough"])
-        .use(dollarmath_plugin, allow_digits=False, double_inline=True, renderer=render_math)
-        .use(footnote_plugin)
-        .use(tasklists_plugin)
-        .use(anchors_plugin, max_level=4)
-    )
-    md.core.ruler.push("strip_quote_markers", strip_quote_markers)
-    md.core.ruler.after("inline", "split_lines", split_lines)
-    md.core.ruler.push("add_line_numbers", add_line_numbers)
-    return md
-
-
-def render_block(renderer, tokens, index, options, env):
-    token = tokens[index]
-    if token.nesting == 1:
-        token.attrSet("class", token.info.strip())
-    return renderer.renderToken(tokens, index, options, env)
-
-
-def class_span(state, silent):
-    """[文字]{.date} 生成 <span class="date">。只认 class：style 这些属性会绕开模板 CSS 的检查，
-    所以不用 mdit-py-plugins 的 attrs 插件，它的 allowed 参数管不到这种写法。"""
-    if state.src[state.pos] != "[" or state.src.startswith("@", state.pos + 1):  # [@fig:a] 是引用，不能变成文字
-        return False
-    label_end = state.md.helpers.parseLinkLabel(state, state.pos)
-    match = SPAN_CLASSES.match(state.src, label_end + 1) if label_end >= 0 else None
-    if not match:
-        return False
-    if not silent:
-        end = state.posMax
-        state.pos += 1
-        state.posMax = label_end
-        token = state.push("span_open", "span", 1)
-        token.attrSet("class", " ".join(name[1:] for name in match.group(1).split()))
-        state.md.inline.tokenize(state)
-        state.push("span_close", "span", -1)
-        state.posMax = end
-    state.pos = match.end()
-    return True
-
-
-def enable_custom_markup(md):
-    """模板可以写 ::: job 和 [文字]{.date}，生成带 class 的块和文字，由模板的 CSS 决定样式。
-    要在 numbered.enable 之后调用，这样 ::: figures 先被认成图组。"""
-    md.use(container_plugin, name="block", render=render_block,
-           validate=lambda params, *_: bool(BLOCK_CLASSES.fullmatch(params.strip())))
-    md.inline.ruler.after("link", "class_span", class_span)  # 排在链接后面，真正的链接不受影响
-    return md
-
-
 MD = make_markdown()
 MD_NUMBERED = enable_custom_markup(numbered.enable(make_markdown()))  # 基于 numbered 的模板用这个
 MD_CUSTOM = enable_custom_markup(make_markdown())  # 基于 none 的模板用这个
