@@ -110,6 +110,16 @@ body.no-file .doc { display: none; }
 .CodeMirror { height: 100%; }
 .CodeMirror-gutters { border-right: 1px solid var(--border); background: var(--bg); }
 .CodeMirror-linenumber { color: #aaa; }
+
+/* 折叠：展开的箭头平时隐藏，鼠标移到编辑区上才显示，不然每个标题旁边都有一个；折叠起来的一直显示 */
+.CodeMirror-foldgutter { width: 14px; }
+.CodeMirror-foldgutter-open, .CodeMirror-foldgutter-folded { color: #999; cursor: pointer; }
+.CodeMirror-foldgutter-open { opacity: 0; transition: opacity .15s; }
+.CodeMirror:hover .CodeMirror-foldgutter-open { opacity: 1; }
+.CodeMirror-foldgutter-folded { color: var(--accent); }
+.CodeMirror-foldgutter-open:hover, .CodeMirror-foldgutter-folded:hover { color: var(--text); }
+.fold-marker { display: inline-block; margin: 0 4px; padding: 0 6px; border-radius: 4px; background: var(--surface); color: var(--muted); font-size: .85em; line-height: 1.4; cursor: pointer; }
+.fold-marker:hover { background: var(--border); color: var(--text); }
 /* 列表按层级上色，放在最前面，这样列表里的粗体、代码、公式等格式能盖过列表颜色 */
 .cm-s-default .cm-variable-2 { color: #1a5fb4; }
 .cm-s-default .cm-variable-3 { color: #2e7d32; }

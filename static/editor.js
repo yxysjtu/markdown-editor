@@ -56,6 +56,17 @@
     return !!current && cm.getValue() !== saved;
   }
 
+  // 上一次保存失败了（比如编辑器的服务器被关掉）。这时未保存的提示要一直是红色，打字也不能把它盖成普通的灰色
+  var saveFailed = false;
+
+  function showUnsaved() {
+    keepStatus(saveFailed ? 'Unsaved changes – could not save' : 'Unsaved changes', saveFailed);
+  }
+
+  function errorMessage(err) {
+    return err instanceof TypeError ? 'the editor server is not running' : err.message; // fetch 连不上时是 TypeError
+  }
+
   function folderUrl(folder) {
     return '/?root=' + encodeURIComponent(folder);
   }
@@ -447,9 +458,20 @@
     });
   }
 
+  // 折叠：标题折叠到下一个同级或更高级的标题之前，HTML 标签折叠到它的结束标签（比如很长的 <details>）。
+  // 编辑区用的是自己定义的模式，CodeMirror 认不出该用哪种折叠，所以这里写明。只有一行的不折叠
+  var foldRange = CodeMirror.fold.combine(CodeMirror.fold.markdown, CodeMirror.fold.xml);
+  var FOLD_MARKER = document.createElement('span');
+  FOLD_MARKER.className = 'fold-marker';
+  FOLD_MARKER.textContent = '…';
+  FOLD_MARKER.title = 'Click to unfold';
+
   cm = CodeMirror(document.getElementById('editor-pane'), {
     mode: 'markdown-editor',
     lineNumbers: true,
+    gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+    foldGutter: { rangeFinder: foldRange, minFoldSize: 1 },
+    foldOptions: { rangeFinder: foldRange, minFoldSize: 1, widget: FOLD_MARKER },
     lineWrapping: true,
     indentUnit: 2,
     tabSize: 2,
@@ -1072,9 +1094,24 @@
     })).then(function () { return failed; });
   }
 
+  // 折叠起来的 <details> 里的标题看不到，点了目录也跳不过去，所以目录和 PDF 书签都不要它。
+  // 写在 <summary> 里的标题折叠时也看得到
+  function isFoldedAway(element) {
+    for (var details = element.parentElement && element.parentElement.closest('details'); details;
+      details = details.parentElement && details.parentElement.closest('details')) {
+      var summary = element.closest('summary');
+      if (!details.open && !(summary && summary.parentElement === details)) return true;
+    }
+    return false;
+  }
+
+  function visibleHeadings(container) {
+    return Array.prototype.filter.call(container.querySelectorAll('h1, h2, h3'), function (heading) { return !isFoldedAway(heading); });
+  }
+
   // 导出文件的目录，只用链接和 details，不需要脚本。标题太少时不需要目录
   function exportTocList(body) {
-    var headings = Array.prototype.filter.call(body.querySelectorAll('h1, h2, h3'), function (heading) { return heading.id; });
+    var headings = visibleHeadings(body).filter(function (heading) { return heading.id; });
     if (headings.length < TOC_MIN_HEADINGS) return '';
     var top = Math.min.apply(null, headings.map(function (h) { return +h.tagName.charAt(1); }));
     var list = document.createElement('ul');
@@ -1114,7 +1151,8 @@
         var title = data.title || fileStem(path);
         var tocList = exportTocList(body);
         var toc = tocList ? '<details class="export-toc" open><summary>' + escapeHtml(data.toc_title) + '</summary>' + tocList + '</details>\n' : '';
-        if (forPdf) { // PDF 的书签来自标题，只保留三级
+        // PDF 的书签来自标题，只保留三级。折叠的 <details> 不打印，Chrome 自己就不会把里面的标题放进书签
+        if (forPdf) {
           body.querySelectorAll('h4, h5, h6').forEach(function (heading) { heading.setAttribute('role', 'paragraph'); });
         }
         var head = '';
@@ -1319,19 +1357,21 @@
   function writeFile(force) {
     var content = cm.getValue();
     var path = current.path;
-    keepStatus('Saving…');
+    keepStatus('Saving…', saveFailed); // 上次失败了，重试时也保持红色，不闪成灰色
     return request('/api/save', { root: root, path: path, content: content, mtime: current.mtime, force: !!force })
       .then(function (data) {
+        saveFailed = false;
         if (!current || current.path !== path) return true;
         current.mtime = data.mtime;
         saved = content;
-        if (isDirty()) keepStatus('Unsaved changes');
+        if (isDirty()) showUnsaved();
         else showStatus('Saved');
         return true;
       })
       .catch(function (err) {
         if (err.status !== 409) {
-          showStatus('Could not save: ' + err.message, true);
+          saveFailed = true;
+          showStatus('Could not save: ' + errorMessage(err), true);
           return false;
         }
         var overwrite = window.confirm(
@@ -1357,6 +1397,7 @@
       return ok;
     }, function () {
       saving = null;
+      saveFailed = true;
       showStatus('Could not save', true);
       return false;
     });
@@ -1488,7 +1529,7 @@
 
   function buildToc() {
     var scrollTop = tocList.scrollTop; // 打字时目录会重建，不要让它跳回顶部
-    tocHeadings = Array.prototype.slice.call(previewBody.querySelectorAll('h1, h2, h3'));
+    tocHeadings = visibleHeadings(previewBody);
     var top = Math.min.apply(null, tocHeadings.map(function (h) { return +h.tagName.charAt(1); }));
     tocList.textContent = '';
     tocRail.textContent = '';
@@ -1535,10 +1576,23 @@
   tocPin.addEventListener('click', toggleTocPinned);
   tocRail.addEventListener('click', toggleTocPinned); // 点缩略条也能固定，触屏没有悬浮时靠它展开
   previewPane.addEventListener('scroll', updateTocActive, { passive: true });
+  // 在预览里展开或收起 <details> 时，里面的标题要加进目录或从目录去掉。toggle 事件不冒泡，所以在捕获阶段听
+  previewBody.addEventListener('toggle', function () {
+    buildToc();
+    updateTocActive();
+  }, true);
   setTocPinned(localStorage.getItem('editor-toc-pinned') === '1');
 
   var isSyncingPreview = false;
   var isSyncingEditor = false;
+
+  // 同步滚动用的对照块。折叠起来的 <details> 里的块看不到，浏览器报的位置也不对（可能远在页面底部之外），
+  // 拿来对照会让另一栏先跳到底再跳回来，所以只用看得见的块
+  function syncBlocks() {
+    return Array.prototype.filter.call(previewBody.querySelectorAll('[data-line]'), function (el) {
+      return !isFoldedAway(el) && el.getClientRects().length > 0;
+    });
+  }
 
   // 让预览跟随编辑区：找到编辑区顶部所在的内容块，按比例滚到预览里对应的位置
   function syncScroll() {
@@ -1558,7 +1612,7 @@
       return;
     }
     var line = cm.lineAtHeight(info.top, 'local');
-    var blocks = previewBody.querySelectorAll('[data-line]');
+    var blocks = syncBlocks();
     var before = null;
     var after = null;
     for (var i = 0; i < blocks.length; i++) {
@@ -1598,7 +1652,7 @@
       return;
     }
 
-    var blocks = previewBody.querySelectorAll('[data-line]');
+    var blocks = syncBlocks();
     var before = null;
     var after = null;
     var offsetOf = function (el) {
@@ -1633,7 +1687,7 @@
     previewTimer = setTimeout(renderPreview, PREVIEW_DELAY);
     clearTimeout(saveTimer);
     if (isDirty()) {
-      keepStatus('Unsaved changes');
+      showUnsaved();
       saveTimer = setTimeout(saveNow, AUTOSAVE_DELAY);
     } else {
       showStatus('Saved');
