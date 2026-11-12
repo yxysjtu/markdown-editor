@@ -25,6 +25,8 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name
 from pygments.util import ClassNotFound
 
+from emoji_names import EMOJI
+
 CLASS_NAME = r"[^\W\d][\w-]*"
 BLOCK_CLASSES = re.compile(rf"{CLASS_NAME}(?: {CLASS_NAME})*")
 SPAN_CLASSES = re.compile(rf"\{{\s*(\.{CLASS_NAME}(?:\s+\.{CLASS_NAME})*)\s*\}}")
@@ -215,6 +217,19 @@ def render_video(self, tokens, idx, options, env):
             'referrerpolicy="strict-origin-when-cross-origin"></iframe></div>\n')
 
 
+# ---------- 表情 ----------
+# 前后不能紧挨英文字母或数字（a:smile:b、12:30:45 不是表情）；可以挨着中文，也可以连着写 :sob::rofl:
+EMOJI_CODE = re.compile(r"(?<![A-Za-z0-9_]):([a-z0-9_+-]+):(?![A-Za-z0-9_])")
+
+
+def replace_emoji(state):
+    """:sob: 这种表情名字换成表情字符。只换认识的名字；代码里的、网址和时间（12:30:45）不受影响。"""
+    for token in state.tokens:
+        for child in token.children or []:
+            if child.type == "text" and ":" in child.content:
+                child.content = EMOJI_CODE.sub(lambda m: EMOJI.get(m.group(1), m.group(0)), child.content)
+
+
 # ---------- 中文里的粗体 ----------
 # 标准 Markdown 里，** 一边是中文字、另一边是标点时不算粗体：“的**“第一阶段”**”、“（ILAS）**流程”都会原样显示 **。
 # 这里放宽：** 外侧是中日韩文字时，当作外侧是空格来判断。只对 * 生效，_ 的规则不变；
@@ -279,6 +294,7 @@ def make_markdown():
     )
     md.core.ruler.push("strip_quote_markers", strip_quote_markers)
     md.core.ruler.after("inline", "split_lines", split_lines)
+    md.core.ruler.after("split_lines", "replace_emoji", replace_emoji)
     md.block.ruler.before("paragraph", "video", video_block, {"alt": ["paragraph"]})
     md.block.ruler.before("html_block", "tag_line", tag_line)
     md.add_render_rule("video", render_video)
