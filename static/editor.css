@@ -95,7 +95,7 @@ body.no-file .doc { display: none; }
 .tree-file { padding-left: 24px; }
 .file-tree details > summary:hover, .tree-file:hover { background: var(--surface-hover); }
 .tree-children { padding-left: 12px; }
-.tree-file.active { background: var(--text); color: #fff; }
+.tree-file.active, .tree-file.active:hover { background: #dcdcdc; color: var(--text); }  /* 打开的文件：比悬停（--surface-hover）深一点的灰，文字不变色 */
 .tree-empty { padding: 3px 8px; color: var(--muted); }
 .file-tree details > summary.tree-selected, .file-tree details > summary.tree-selected:hover, .tree-file.tree-selected, .tree-file.tree-selected:hover { background: #dbe7f6; color: var(--text); }
 .tree-file.active.tree-selected, .tree-file.active.tree-selected:hover { background: var(--accent); color: #fff; }
