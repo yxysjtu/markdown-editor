@@ -18,6 +18,18 @@ class Library(RenderTest):
         self.assertEqual((data["doc_class"], data["template_css"], data["warning"]), ("", "", ""))
         self.assertTrue(data["show_head"])
 
+    def test_library_folder_name_can_change(self):
+        """博客把自己的模板放在 _templates，不放在 templates（那会变成导航栏的栏目）。"""
+        import template_loader
+        self.write("_templates/mine.md", "---\nextends: none\n---\n")
+        self.assertIn("Unknown template", self.render("---\ntemplate: mine\n---\nx")["warning"])
+        original = template_loader.LIBRARY
+        template_loader.LIBRARY = "_templates"
+        self.addCleanup(setattr, template_loader, "LIBRARY", original)
+        data = self.render("---\ntemplate: mine\n---\nx")
+        self.assertEqual(data["warning"], "")
+        self.assertEqual(self.render("---\ntemplate: report\n---\n# a")["warning"], "")  # 自带的模板照样能用
+
     def test_report_works_in_any_folder(self):
         data = self.render("---\ntemplate: report\n---\n# a")
         self.assertEqual(data["doc_class"], "numbered paged")

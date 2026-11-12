@@ -14,6 +14,8 @@ from paths import ApiError, content_path, markdown_path, read_markdown
 APP_DIR = Path(__file__).resolve().parent
 NUMBERED_CSS = APP_DIR / "templates" / "numbered.css"
 TEMPLATE_NAME = re.compile(r"[\w-]+(?: [\w-]+)*")
+# 打开的文件夹里放自己模板的文件夹。博客改成 _templates，开头的下划线让它不会变成导航栏的栏目
+LIBRARY = "templates"
 
 
 def split_frontmatter(source):
@@ -42,8 +44,8 @@ def find_library_template(root, name, seen):
     """按名字找模板：先找打开的文件夹下的 templates，再找编辑器自带的 templates。返回 (所在的文件夹, 相对路径)。
     已经用过的文件要跳过，这样打开的文件夹里的 report.md 可以写 extends: report，继承编辑器自带的那个。"""
     if isinstance(name, str) and TEMPLATE_NAME.fullmatch(name):
-        target = f"templates/{name}.md"
-        for folder in (root, str(APP_DIR)):
+        for folder, library in ((root, LIBRARY), (str(APP_DIR), "templates")):
+            target = f"{library}/{name}.md"
             if (folder, target) not in seen and markdown_path(folder, target).is_file():
                 return folder, target
     return None, None
@@ -51,8 +53,8 @@ def find_library_template(root, name, seen):
 
 def template_names(root):
     names = {"numbered"}
-    for folder in (Path(root), APP_DIR):
-        names.update(path.stem for path in (folder / "templates").glob("*.md") if TEMPLATE_NAME.fullmatch(path.stem))
+    for folder in (Path(root) / LIBRARY, APP_DIR / "templates"):
+        names.update(path.stem for path in folder.glob("*.md") if TEMPLATE_NAME.fullmatch(path.stem))
     return ", ".join(sorted(names))
 
 

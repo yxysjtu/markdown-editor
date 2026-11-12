@@ -24,10 +24,8 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from pygments.formatters import HtmlFormatter
 
-import numbered
-from md_render import enable_custom_markup, make_markdown
+from doc_render import render_body
 import template_loader
-import template_style
 from paths import MARKDOWN_SUFFIXES, ApiError, content_path, markdown_path, read_markdown, workspace
 
 try:
@@ -568,11 +566,6 @@ def api_save_image(data):
     return {"path": saved, "link": quote(posixpath.relpath(saved, posixpath.dirname(document) or "."))}
 
 # ---------- 渲染 ----------
-MD = make_markdown()
-MD_NUMBERED = enable_custom_markup(numbered.enable(make_markdown()))  # 基于 numbered 的模板用这个
-MD_CUSTOM = enable_custom_markup(make_markdown())  # 基于 none 的模板用这个
-
-
 def parse_tags(value):
     if not value:
         return []
@@ -593,28 +586,6 @@ def rewrite_images(html, root, rel):
         return f'{match.group(1)}/files?root={root_param}&amp;path={quote(target, safe="")}"'
 
     return re.sub(r'(<img\b[^>]*?\bsrc=")(?![a-zA-Z][a-zA-Z0-9+.-]*:|/|#)([^"]+)"', replace, html)
-
-
-def render_body(meta, body, env, root, rel):
-    """按 frontmatter 选的模板渲染正文，返回 (HTML, 给前端的模板信息, 问题)。前端只看模板信息，不需要知道是哪个模板。"""
-    template = template_loader.load_template(meta, root, rel)
-    info = {
-        "doc_class": template["doc_class"],
-        "show_head": template["base"] != "numbered",  # numbered 的题目、作者和摘要在正文的开头
-        "template_css": template["css"],
-        "toc_title": "Table of Contents",
-        "pdf_bookmarks": template["pdf_bookmarks"],
-    }
-    if template["base"] is None:
-        return MD.render(body, env), info, template["problems"]
-    if template["base"] == "none":
-        return MD_CUSTOM.render(body, env), info, template["problems"]
-    text = template_style.apply_text(numbered.text_for(template["lang"]), template["values"])
-    env["numbered_text"] = text
-    info["toc_title"] = text["toc"]
-    render_inline = lambda value: MD_CUSTOM.renderInline(value, {"line_offset": 0})
-    html = numbered.front_matter_html(meta, text, render_inline) + MD_NUMBERED.render(numbered.prepare_source(body), env)
-    return html, info, template["problems"]
 
 
 def api_render(data):

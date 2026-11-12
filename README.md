@@ -340,7 +340,7 @@ python tests/compare_pdf.py compare
 
 ## 说明
 
-- Markdown 怎么变成 HTML 的规则都在 `md_render.py`，不读写文件、不依赖编辑器的其他部分，可以单独拿去用（依赖 markdown-it-py、mdit-py-plugins、Pygments）：`md_render.make_markdown().render(文字)`。博客 yxysjtu.github.io 就用它渲染，本机构建博客时会自动复制最新的一份过去，所以两边显示一致。模板、编号和预览图片地址这些编辑器专属的功能不在里面
+- Markdown 怎么变成 HTML 的规则都在 `md_render.py`，不读写文件、不依赖编辑器的其他部分，可以单独拿去用（依赖 markdown-it-py、mdit-py-plugins、Pygments）：`md_render.make_markdown().render(文字)`。带模板的文档用 `doc_render.py` 的 `render_body`，它再用到 `numbered.py`、`template_loader.py`、`template_style.py` 和 `templates/` 里自带的模板。博客 yxysjtu.github.io 也用这几个文件渲染，本机构建博客时会自动复制最新的一份过去，所以两边的编号、图题和模板样式一致。`template_loader.LIBRARY` 是打开的文件夹里放自己模板的文件夹名（默认 `templates`，博客用 `_templates`）。预览的图片地址改写是编辑器专属的，不在里面
 - 点右上角的 Settings 可以调编辑区的字号和图片文件夹，配置保存在 `preferences.json` 里，不会提交到 git。
 - 只在本机运行，其他网站和其他电脑都不能访问。
 - Markdown 里可以写 HTML，但预览和导出时会去掉脚本、`onclick` 这类事件属性和 `javascript:` 链接，打开别人给的文件也不会运行里面的脚本。
